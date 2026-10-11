@@ -1,9 +1,11 @@
 # RaceLab
 
+*(This repository is `flatout`; the app it contains is RaceLab.)*
+
 Race management and software drivers for **Carrera Digital 124/132** slot-car
 tracks, from a laptop. RaceLab talks to the Control Unit (CU) through the
-Carrera AppConnect Bluetooth dongle or a serial cable, runs your races, and —
-with a custom CU firmware — lets software drive the cars: a fader in the UI,
+Carrera AppConnect Bluetooth adapter (item 30369) or a serial cable, runs your
+races, and — with a custom CU firmware — lets software drive the cars: a fader in the UI,
 a local autopilot, or your own agent (reinforcement learning) through an API.
 
 > **Status: early but playable.** Everything runs against the built-in
@@ -27,8 +29,9 @@ a local autopilot, or your own agent (reinforcement learning) through an API.
   format as the simulator.
 - **Virtual CU** — a simulated track, cars and firmware: try everything, write
   and test agents, without hardware.
-- **CU firmware flashing** from the app — bring your own `.HMF` image, SHA-256
-  checked before sending, rollback to stock, recovery mode. See
+- **CU firmware flashing** from the app — the images are built from source
+  (stock and bot firmware, identified by SHA-256), checked before sending,
+  rollback to stock, recovery mode. See
   [Flash a custom CU firmware](#flash-a-custom-cu-firmware-from-the-app) below.
 - **English and French** — the interface is in English, with a French option.
 - **Cross-platform** — macOS, Windows, Linux; Python ≥ 3.11.
@@ -54,7 +57,7 @@ firmware that understands the extra `B` command, and any controller slot can
 be driven by the app, an autopilot or your own agent. RaceLab does the update
 itself — panel **System → CU firmware** — over Bluetooth or serial, with
 confirmation, progress, recovery mode, and the image's SHA-256 shown before
-you flash (always check that, never the file name).
+you flash (always check the hash, not the file name).
 
 | Image to flash | What it does |
 |---|---|
@@ -89,7 +92,8 @@ From a terminal:
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e carreralib/ -e "racelab[dev]"     # Windows: .venv\Scripts\pip
-.venv/bin/racelab --sim                                     # virtual CU, opens http://localhost:8130
+.venv/bin/racelab --sim                                     # Windows: .venv\Scripts\racelab --sim
+                                                            # virtual CU, opens http://localhost:8130
 ```
 
 ## Firmware
@@ -98,7 +102,7 @@ Software drivers need a CU firmware that understands an extra serial command,
 `B` (throttle, lane change, hand back to the controller) — specified in
 [`docs/bot-protocol.md`](docs/bot-protocol.md). Without it, RaceLab works in
 Classic mode (races with physical controllers); Advanced mode is only enabled
-when the CU answers to `B`. Everything firmware lives in
+when the CU responds to the `B` command. Everything firmware lives in
 [`firmware/`](firmware/README.md), as two projects:
 
 | | **Bot module** — `firmware/bot/` | **V339 in C** — `firmware/reconstruction/` |
@@ -144,7 +148,7 @@ An index is in [`docs/README.md`](docs/README.md).
 racelab/      the app: CU link, simulator, race engine, bots, API server, web UI, client
 carreralib/   carreralib (MIT, Thomas Kemmer) with our additions: bot commands, sturdier BLE
 docs/         user guide, API, architecture, protocols
-firmware/     CU firmware: images + manifest, bot module, build, V339 reconstruction in C
+firmware/     CU firmware built from source: V339 in C, bot module, build.py, manifest (tags, SHA-256)
 tools/        check_public.py (pre-publication guard), make_mac_app.py
 install.py    cross-platform installer ("Install RaceLab.command" / ".bat" are double-click wrappers)
 ```
