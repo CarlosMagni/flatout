@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools >= 80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "racelab"
+version = "0.1.0"
+description = "Race management and software drivers for Carrera Digital 124/132 slot-car tracks"
+readme = "README.md"
+requires-python = ">= 3.11"
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: Simulation",
+]
+dependencies = [
+    "carreralib",       # the modified copy in ../carreralib (pip install -e carreralib): bot commands, BLE
+    "aiohttp >= 3.9",
+    "bleak >= 3.0",
+    "pyserial >= 3.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest >= 8"]
+rl = ["gymnasium >= 1.0", "numpy"]
+
+[project.scripts]
+racelab = "racelab.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+racelab = ["web/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

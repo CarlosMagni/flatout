@@ -1,0 +1,65 @@
+{
+  "images": [
+    {
+      "tag": "v339-bot.4",
+      "label": "V339 + bot module",
+      "status": "recommended",
+      "bots": true,
+      "file": "v339-bot.4.hmf",
+      "sha256": "1657008f732b8bda2e3f1a6f2807b52e59a71b356c9151cf9f6f80768f7f56a4",
+      "bin": "v339-bot.4.bin",
+      "bin_sha256": "117ab3792fe19394f941734ed3b3a6d28a64f06e59b7ebcdf2955764dc14569c",
+      "notes": ""
+    },
+    {
+      "tag": "v339-bot.3",
+      "label": "V339 + bot module",
+      "status": "superseded",
+      "bots": true,
+      "file": null,
+      "sha256": "0ee3eb1a6753dc45e4a09f58b56acca8d0e526c5cf44c9f1fbcca0976ca62c9d",
+      "bin_sha256": "1a1f413f1521ec2af6be77e2a6bfbec70c5301029052b3327a7955a0c542e954",
+      "notes": "built with avr-gcc 9.5.0, before the toolchain was unified on 5.4.0; same module source as bot.4"
+    },
+    {
+      "tag": "v339-stock",
+      "label": "V339 stock",
+      "status": "stock",
+      "bots": false,
+      "file": "v339-stock.hmf",
+      "sha256": "c1af1e5a3ea9a2d3590fdff94f49bb7409be63e66729813c9ff2043ecd2b608e",
+      "bin": "v339-stock.bin",
+      "bin_sha256": "a50857e53adaac48f27992e3998a64a5ea10315d837807ba267c618f98cdf611",
+      "notes": "rebuilt from the C reconstruction (firmware/reconstruction), byte-identical to the vendor payload"
+    },
+    {
+      "tag": "v339-bot.2",
+      "label": "V339 + bot module (bot.2)",
+      "status": "defective",
+      "bots": true,
+      "file": null,
+      "sha256": "35f452f432cd1ee2443c7103d4ec49a3c91cdd2ac8cab247a40b1bb06bec71e6",
+      "issue": "event_ring",
+      "warning": "faulty bot build: its state overlaps the firmware's event ring (0x00E9), corrupting the throttle sent to the cars and the status frames — do not flash"
+    },
+    {
+      "tag": "v339-bot.1",
+      "label": "V339 + bot module (bot.1)",
+      "status": "defective",
+      "bots": true,
+      "file": null,
+      "sha256": "2e21d0c8ebcd8c6b433dea05328bd9d94e253329b1a0fb6e3847f773efbf1a79",
+      "issue": "hook_throttle",
+      "warning": "faulty bot hook: the throttle overwrites the controller word address, so the bots' cars do not stop — do not flash"
+    },
+    {
+      "tag": "v339-stock-vendor",
+      "label": "V339 stock (vendor update file)",
+      "status": "stock",
+      "bots": false,
+      "file": null,
+      "sha256": "843ae3d88d84edc805c17340faf9d3b11501f05ce01a11d78021bc0b03c565fc",
+      "notes": "the update file as distributed (other line layout); same payload as v339-stock"
+    }
+  ]
+}

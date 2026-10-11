@@ -1,0 +1,13 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.icns binary
+
+# firmware images: raw bytes, never normalize (SHA-256 = the flash identity)
+*.HMF binary
+*.hmf binary
+*.bin binary
+*.hex binary
+*.elf binary
+*.o binary

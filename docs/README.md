@@ -1,0 +1,16 @@
+# RaceLab documentation
+
+| Document | For | Content |
+|---|---|---|
+| [getting-started.md](getting-started.md) | everyone | install, first launch, first race ([français](fr/getting-started.md)) |
+| [user-guide.md](user-guide.md) | users | the app in detail: modes, screens, bot safety, firmware update, development |
+| [api.md](api.md) | agent and script authors | WebSocket / REST API, track connectors, Python client |
+| [architecture.md](architecture.md) | contributors | modules and their contracts |
+| [protocol.md](protocol.md) | protocol / tool authors | CU serial and Bluetooth protocol |
+| [bot-protocol.md](bot-protocol.md) | firmware and app authors | the `B` command (software drivers) and its safety rules |
+| [firmware/](../firmware/README.md) | firmware contributors | images and tags, building the bot image, the C reconstruction |
+
+Also: [examples for agents](../racelab/examples/README.md) (Python client,
+Gymnasium environment, a track connector) and the
+[tools](../tools/README.md). The project overview is in the
+[main README](../README.md); see [CONTRIBUTING](../CONTRIBUTING.md) to help.

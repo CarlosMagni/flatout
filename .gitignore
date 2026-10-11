@@ -1,0 +1,21 @@
+# --- environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+RaceLab.app/
+.DS_Store
+Thumbs.db
+
+# --- local tools
+.vysu/
+.claude/
+
+# --- internal team notes
+internal/
+
+# --- firmware build output (firmware/build.py)
+firmware/build/

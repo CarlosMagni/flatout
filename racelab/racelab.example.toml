@@ -1,0 +1,60 @@
+# RaceLab configuration. Copy to ./racelab.toml (or ~/.racelab/racelab.toml)
+# and keep only what you change: everything else takes its default value.
+# Drivers, session settings and bot profiles changed in the UI are saved
+# separately, in <data_dir>/settings.json.
+
+[app]
+mode = "advanced"        # "advanced" (software drivers + RL API) or "classic"
+host = "127.0.0.1"       # "0.0.0.0" to drive from a tablet on the local network
+port = 8130
+open_browser = true
+data_dir = "~/.racelab"  # recorded sessions, UI settings
+
+[connection]
+transport = "none"       # none (choose in the UI) | ble | serial | sim | auto
+device = ""              # BLE: macOS UUID / MAC address; serial: /dev/tty.usbserial-…; empty = BLE scan
+# the choice made in the UI (System → Connection) is remembered and takes precedence over this file
+timeout = 1.0            # max wait for a CU reply (s)
+connect_timeout = 20.0
+reconnect_delay = 1.5
+max_timeouts = 3         # missed replies in a row before declaring the link lost
+
+[safety]
+heartbeat_ms = 500           # resend of the active bots' throttle
+min_bot_interval_ms = 70     # at most 1 throttle change per slot per rail cycle (75 ms)
+deadman_ms = 600             # API agent silent for longer -> throttle 0
+release_on_exit = true       # on exit: throttle 0 then hand control back to the controller
+release_all_on_connect = true
+confirm_throttle_above = 12  # safety notch of the fader in the UI
+max_throttle = 15            # global throttle ceiling for bots
+
+[race]
+min_lap_ms = 2000        # debounce: two passes closer together count as one
+grid_behind_line = true  # the grid is behind the line: the first pass does not count
+auto_countdown = true
+finish_timeout_s = 30
+fuel_low = 3
+
+[tower]
+enabled = true           # position tower 30357 + lap counter
+min_interval_ms = 150
+
+[api]
+enabled = true
+token = ""               # if set: required by the UI and the API (?token=… / Authorization: Bearer …)
+state_hz = 10            # default rate of the broadcast state (an agent can ask for up to 20)
+
+[sim]                    # virtual CU (racelab --sim)
+bot_firmware = true      # false = stock firmware (to test classic mode)
+humans = [1, 2]          # slots held by simulated "human" drivers
+latency_ms = 12
+jitter_ms = 6
+fuel_mode = true
+pit_lane = true
+
+# Drivers (slot 0..5 = controllers 1..6, 6 = ghost, 7 = pace car)
+# [[drivers]]
+# slot = 0
+# name = "Carlos"
+# color = "#e5383b"
+# car = "Porsche 911 RSR"
