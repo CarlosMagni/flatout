@@ -21,6 +21,11 @@ Full specification on the app side: [`docs/bot-protocol.md`](../../docs/bot-prot
 Without any `B` command the module returns the words unchanged: same behaviour as
 the stock firmware.
 
+**Watchdog**: each throttle command reloads a per-slot countdown of 13 rail cycles
+(about 1 s). When it runs out (application killed, link lost), the slot's throttle
+becomes 0 and the slot stays a bot, as after `B<adr>0`. RaceLab resends every bot's
+throttle every 500 ms.
+
 ## How it hooks in
 
 | hook | stock site | replaces | goes to |
@@ -31,12 +36,17 @@ the stock firmware.
 
 ## Memory map
 
-- **Flash**: module at `0x36B8-0x37EF` (296 of 312 free bytes used). The id string
+- **Flash**: module at `0x36B8-0x37EF` (308 of 312 free bytes used). The id string
   at `0x37F0` and the bootloader at `0x3800+` are never touched.
-- **RAM**: state in bytes no firmware function uses — slot structs at
-  `0x21C + 16·i`: throttle in byte [2] (`0x21E`, `0x22E`, …), bot mask in slot 0
-  byte [3] (`0x21F`), lane-change mask in slot 1 byte [3] (`0x22F`). Zeroed at
-  reset by crt0. **Never use `0x00E9-0x0118`** (event ring).
+- **RAM**: 14 bytes above the firmware's `.bss` (`0x006C-0x0416`) and below the stack:
+  throttle `0x0417-0x041C`, watchdog countdowns `0x041D-0x0422`, bot mask `0x0423`,
+  lane-change mask `0x0424`. `build.py` patches crt0's `.bss` clear loop (`0x0110`,
+  `cpi r26,0x25`) so they are 0 at reset. Stack: SP starts at `0x045F`; the firmware's
+  worst case is 40 bytes (main path 27 + deepest interrupt 13, interrupts never nest),
+  the module adds 2 — 59 bytes are left.
+- **Never use firmware RAM**: the slot structs' bytes are all firmware state (+2 status,
+  +3 button press edge — bot.3/bot.4 put the bot state there and are defective), and
+  `0x00E9-0x0118` is the event ring (bot.2). The C reconstruction tells which RAM is used.
 - No `.data`/`.bss`, no division helper: `build.py` refuses a module that needs them.
 
 ## Controller word (what P3 filters)

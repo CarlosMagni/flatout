@@ -31,20 +31,23 @@
 #define CMD_PARAM1   (*(volatile uint8_t *)0x011D)  /* command parameters */
 #define CMD_PARAM2   (*(volatile uint8_t *)0x011E)
 
-/* BOT state — IN THE FREE BYTES OF THE SLOT STRUCTS (0x21C + 16·i)
- * ⚠️ CORRECTED 2026-10: the old area 0x00E9-0x00F2 = firmware EVENT RING
- * (corruption otherwise!). Bytes [2],[3] of each 16-byte slot are read/written by NO
- * firmware function (audit of the reconstructions:
- * used = [0][1][4][5][6][9][10][11][12][14][15]).
- * .bss (0x6C-0x417) is zeroed at reset by crt0 → initial state 0. */
-#define BOT_THROTTLE(i)     (*(volatile uint8_t *)(0x021C + 16 * (i) + 2)) /* slot i byte [2] — 0x21E,0x22E,… */
-#define BOT_MASK       (*(volatile uint8_t *)0x021F)          /* slot 0 byte [3] — address bit = BOT slot */
-#define LANE_PENDING   (*(volatile uint8_t *)0x022F)          /* slot 1 byte [3] — address bit = track switch armed */
+/* BOT state — free RAM above the firmware's .bss (0x006C-0x0416) and below the stack
+ * (SP starts at 0x045F; worst-case stack depth of the firmware: 40 bytes, see
+ * firmware/bot/README.md). firmware/build.py extends crt0's .bss clear loop to 0x0425,
+ * so this state is 0 at reset.
+ * ⚠️ bot.3 and bot.4 kept it in bytes [2],[3] of the slot structs: the full
+ * reconstruction shows they are firmware state (+2 status: tank level / empty bit,
+ * +3 press_edge, rewritten every cycle) — those images are defective. */
+#define BOT_THROTTLE(i) (((volatile uint8_t *)0x0417)[i])  /* rail throttle bits, slots 0-5 */
+#define BOT_TTL(i)      (((volatile uint8_t *)0x041D)[i])  /* watchdog countdown, slots 0-5 */
+#define BOT_MASK        (*(volatile uint8_t *)0x0423)      /* address bit = BOT slot */
+#define LANE_PENDING    (*(volatile uint8_t *)0x0424)      /* address bit = lane change armed */
 
 enum {
     BOT_SLOTS   = 6,     /* ids 0..5 = joystick words                     */
     ADDR_BITS   = 0x07,  /* bits 0-2: address (kept as is)                */
     SW_BIT      = 0x08,  /* bit 3: switch, 0 = pressed                    */
+    WATCHDOG_CYCLES = 13, /* ~1 s of rail cycles (75 ms) without a B throttle command -> throttle 0 */
 };
 
 /* throttle 0..15 -> word field: G3 in bit 4, G2 in bit 5, G1 in bit 6, G0 in bit 7 */
@@ -83,6 +86,7 @@ void cmd_bot_set(void)
         return;
 
     BOT_THROTTLE(adr) = throttle_to_rail_bits(val);    /* sets throttle (and activates slot) */
+    BOT_TTL(adr) = WATCHDOG_CYCLES;                    /* each throttle command feeds the watchdog */
     BOT_MASK |= bit;
 }
 
@@ -93,7 +97,7 @@ void cmd_bot_set(void)
 uint16_t bot_hook_word(uint16_t mot)
 {
     uint8_t adr = WORD_INDEX;
-    uint8_t bit, lo;
+    uint8_t bit, lo, thr;
 
     if (adr >= BOT_SLOTS)
         return mot;                   /* programming, pace car, active words */
@@ -101,7 +105,14 @@ uint16_t bot_hook_word(uint16_t mot)
     if ((BOT_MASK & bit) == 0)
         return mot;                   /* slot not in BOT mode */
 
-    lo = (uint8_t)(((uint8_t)mot & ADDR_BITS) | SW_BIT | BOT_THROTTLE(adr));
+    /* watchdog: no throttle command for WATCHDOG_CYCLES cycles (app killed, link lost)
+     * -> throttle 0; the slot stays a bot, as after `B<adr>0` */
+    thr = BOT_THROTTLE(adr);
+    if (BOT_TTL(adr) == 0)
+        thr = 0;
+    else
+        BOT_TTL(adr)--;
+    lo = (uint8_t)(((uint8_t)mot & ADDR_BITS) | SW_BIT | thr);
     if (LANE_PENDING & bit) {
         lo &= (uint8_t)~SW_BIT;       /* press: SW active at 0 */
         LANE_PENDING &= (uint8_t)~bit;

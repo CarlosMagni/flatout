@@ -39,6 +39,10 @@ HOOKS = {
     0x06E6: ("STUB2", 0),  # dispatcher: sts 0x00E6,r1 (4 bytes)
     0x304A: ("STUB3", 2),  # rail word builder: the 2 sts to the shifter (8 bytes); jmp, not call
 }
+# other patches of the stock image: address -> (stock bytes, new bytes)
+PATCHES = {
+    0x0110: (b"\xa7\x31", b"\xa5\x32"),  # crt0 .bss clear: cpi r26,0x17 -> 0x25 (bot state 0x0417-0x0424 zeroed)
+}
 CFLAGS = ["-mmcu=atmega16", "-Os", "-ffreestanding", "-fno-jump-tables",
           "-fno-tree-loop-distribute-patterns",  # no implicit memcpy/memset
           "-nostartfiles", "-nostdlib",
@@ -137,6 +141,10 @@ def build_bot(stock):
     for site, (stub, nops) in HOOKS.items():
         patch = jmp(stubs[stub]) + NOP * nops
         image[site:site + len(patch)] = patch
+    for site, (old, new) in PATCHES.items():
+        if bytes(image[site:site + len(old)]) != old:
+            fail("unexpected stock bytes at 0x%04x" % site)
+        image[site:site + len(new)] = new
     print("bot module: %d bytes at 0x%04x, stubs %s" % (len(module), MODULE_START,
           ", ".join("%s=0x%04x" % kv for kv in sorted(stubs.items()))))
     return bytes(image)

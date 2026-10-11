@@ -2,21 +2,32 @@
 
 SHA-256 of the `.HMF` file. Full list in `manifest.json`. Images are built from source by `build.py`.
 
-## v339-bot.4 — recommended
+## v339-bot.5 — recommended
+
+`4a0a514bcf72308ffde3a9aba2e0cbb54a61b5744b3de6047e136a85c0e02bbf`
+
+- Bot state moved out of the slot structs to free RAM `0x0417-0x0424`, which crt0 now
+  clears at reset (`.bss` clear loop extended). The full C reconstruction showed that
+  slot bytes +2 (status: tank level, empty bit) and +3 (button press edge, rewritten every
+  cycle) are firmware state: bot.3 and bot.4 overlapped them.
+- Firmware watchdog: throttle 0 after ~1 s (13 rail cycles) without a throttle command.
+- Module 308 bytes (of 312 free).
+
+## v339-bot.4 — defective, never flash
 
 `1657008f732b8bda2e3f1a6f2807b52e59a71b356c9151cf9f6f80768f7f56a4`
 
-- Same bot module source as bot.3, built with the pinned toolchain (avr-gcc 5.4.0) on the
-  stock image rebuilt from the C reconstruction: one compiler for the whole firmware.
-  Module 294 bytes (296 with 9.5.0), same hooks and stub addresses.
+- Same module as bot.3, built with the pinned toolchain (avr-gcc 5.4.0) on the stock image
+  rebuilt from the C. Defective like bot.3: bot state in firmware RAM (see bot.5).
 
-## v339-bot.3 — superseded
+## v339-bot.3 — defective, never flash
 
 `0ee3eb1a6753dc45e4a09f58b56acca8d0e526c5cf44c9f1fbcca0976ca62c9d`
 
 - Bot state moved to free bytes of the slot structs (`0x21C + 16·i + 2`, masks at
   `0x21F`/`0x22F`). Fixes bot.2.
-- Built with avr-gcc 9.5.0 (no longer built; still recognised by its SHA-256).
+- Built with avr-gcc 9.5.0. Defective: its state (throttle in slot byte +2, masks in slot 0/1
+  byte +3) is firmware state, as the full reconstruction later showed (see bot.5).
 
 ## v339-bot.2 — defective, never flash
 

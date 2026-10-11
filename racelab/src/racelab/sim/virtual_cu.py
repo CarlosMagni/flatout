@@ -43,6 +43,8 @@ def _args(fmt: str, frame: bytes) -> tuple | None:
     return None
 
 
+BOT_WATCHDOG_S = 13 * 0.075  # firmware watchdog: 13 rail cycles of 75 ms (firmware/bot/bot_mode.c)
+
 class Simulator:
     """The virtual CU and the track; the state (firmware, cars) survives reconnections."""
 
@@ -63,6 +65,8 @@ class Simulator:
         self.bot_mask = 0  # bit addr = slot in bot mode
         self.bot_gas = [0] * 8
         self.lane_pending = 0  # bit addr = lane change armed
+        self.bot_fed_at = [0.0] * 8  # simulated time of each slot's last throttle command (watchdog)
+        self.bot_watchdog_s: float | None = BOT_WATCHDOG_S  # None: no watchdog (low-level tests)
         # CU
         self.t = 0.0  # simulated time (s); the CU clock is its truncation to ms
         self.phase = 0
@@ -177,6 +181,9 @@ class Simulator:
     def _raw_throttle(self, car: Car, h: float) -> int:
         """Throttle requested before the CU hold: bot, otherwise controller (simulated human or nothing)."""
         if self.bot_mask >> car.slot & 1:
+            # firmware watchdog (v339-bot.5): no throttle command for ~13 rail cycles -> 0
+            if self.bot_watchdog_s is not None and self.t - self.bot_fed_at[car.slot] > self.bot_watchdog_s:
+                return 0
             return self.bot_gas[car.slot]
         human = self._humans.get(car.slot)
         return human.throttle(h, self.phase) if human else 0
@@ -283,6 +290,7 @@ class Simulator:
                 self.lane_pending |= bit
         elif val <= 15:
             self.bot_gas[adr] = val
+            self.bot_fed_at[adr] = self.t
             self.bot_mask |= bit
         return b"B"
 

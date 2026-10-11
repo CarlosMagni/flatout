@@ -40,18 +40,18 @@ panel (**Build the images**) when the images are missing.
 
 ```
 v339-stock.hmf   sha256 c1af1e5a…  = v339-stock
-bot module: 294 bytes at 0x36b8
-v339-bot.4.hmf   sha256 1657008f…  = v339-bot.4
+bot module: 308 bytes at 0x36b8
+v339-bot.5.hmf   sha256 4a0a514b…  = v339-bot.5
 ```
 
 ## Images and tags
 
 | tag | status | built |
 |---|---|---|
-| `v339-bot.4` | recommended | yes |
+| `v339-bot.5` | recommended — bot state in free RAM, firmware watchdog | yes |
 | `v339-stock` | stock — the rollback | yes |
 | `v339-stock-vendor` | stock — the vendor update file (other line layout, same payload) | no, recognised when imported |
-| `v339-bot.3` | superseded — same module built with avr-gcc 9.5.0 | no, recognised |
+| `v339-bot.4`, `v339-bot.3` | defective — bot state in firmware RAM; the app refuses them | no |
 | `v339-bot.2`, `v339-bot.1` | defective — the app refuses them | no |
 
 The app decides everything (label, warning, refusal) from the SHA-256 of a file, never from
@@ -62,7 +62,7 @@ its name. Tags are `v339-bot.N`: CU firmware 339, bot module revision N.
 1. Change `bot/`, run `python3 firmware/build.py` until it is right.
 2. Test on the virtual CU (`racelab --sim --stock-firmware`), then on a bench CU, car lifted
    first.
-3. `python3 firmware/build.py --release v339-bot.5` — records the new tag and SHA-256 in
+3. `python3 firmware/build.py --release v339-bot.6` — records the new tag and SHA-256 in
    `manifest.json` (`recommended`) and marks the previous one `superseded`.
 4. Fill in its `notes` and add a line to `CHANGELOG.md`.
 

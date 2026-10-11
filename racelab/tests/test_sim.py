@@ -16,10 +16,31 @@ from racelab.sim.track import LAP_LENGTH, default_track
 Status, Timer = ControlUnit.Status, ControlUnit.Timer
 
 
-def make_sim(**overrides) -> Simulator:
+def make_sim(watchdog: bool = False, **overrides) -> Simulator:
+    """Low-level tests send one B command and run for seconds: the firmware watchdog is off
+    unless asked for (the app feeds it with its heartbeat; see test_bot_watchdog)."""
     cfg = dict(latency_ms=0.0, jitter_ms=0.0, seed=1, humans=[], duplicate_rate=0.0)
     cfg.update(overrides)
-    return Simulator(SimConfig(**cfg), realtime=False)
+    sim = Simulator(SimConfig(**cfg), realtime=False)
+    if not watchdog:
+        sim.bot_watchdog_s = None
+    return sim
+
+
+def test_bot_watchdog():
+    """v339-bot.5: a bot slot with no throttle command for ~1 s (13 rail cycles) gets throttle 0
+    and stays a bot; each throttle command feeds the watchdog."""
+    sim = make_sim(watchdog=True)
+    cu = make_cu(sim)
+    cu.setbot(0, 9)
+    for _ in run(sim, 0.5):
+        pass
+    assert sim._raw_throttle(sim.cars[0], 0.05) == 9
+    for _ in run(sim, 0.6):                 # 1.1 s since the last command
+        pass
+    assert sim._raw_throttle(sim.cars[0], 0.05) == 0 and sim.bot_mask & 1
+    cu.setbot(0, 9)                         # feeding again resumes
+    assert sim._raw_throttle(sim.cars[0], 0.05) == 9
 
 
 def make_cu(sim: Simulator, timeout: float = 0.01) -> ControlUnit:

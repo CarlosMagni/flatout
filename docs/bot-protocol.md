@@ -83,11 +83,12 @@ Examples (without framing):
 4. **Do not confuse** `B<address>A` (hand back) with `B<address>0` (bot active,
    stopped).
 
-A firmware-side guard (throttle 0 when no `B` command has arrived for about
-one second) would close the one hole no application can cover: a process that
-is killed abruptly, or a link that drops and never comes back. Firmware
-implementers are encouraged to add it; until then, keep a hand near the track's
-power supply during tests.
+**Firmware-side guard** (v339-bot.5 and later): a bot slot that receives no
+throttle command for about one second (13 rail cycles) gets throttle 0 and stays
+a bot. It closes the one hole no application can cover: a process killed
+abruptly, or a link that drops and never comes back. Applications must therefore
+resend each active bot's throttle well within that second (RaceLab: every 500 ms).
+Still keep a hand near the track's power supply during first tests.
 
 ## What the application should show per slot
 

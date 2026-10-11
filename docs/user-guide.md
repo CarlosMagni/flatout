@@ -163,7 +163,7 @@ in [protocol.md](protocol.md).
 - Duration: about 2 to 3 min over BLE for an image of roughly 900 lines, about
   1 min over serial.
 - The panel lists the images built from source (`firmware/build/`, with their tag,
-  e.g. `v339-bot.4`) and the ones you imported. If they are not built yet, **Build the
+  e.g. `v339-bot.5`) and the ones you imported. If they are not built yet, **Build the
   images** builds them on this computer (`firmware/build.py`; needs Docker, a few minutes
   the first time). Images are identified by the
   SHA-256 of the file, never by its name: known builds are labelled (recommended,

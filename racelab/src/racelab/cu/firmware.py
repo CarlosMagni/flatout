@@ -33,7 +33,7 @@ MANIFEST_PATH = FIRMWARE_ROOT / "manifest.json"
 # renamed file keeps its verdict, and "bot" in a name proves nothing.
 @dataclass(frozen=True)
 class KnownImage:
-    tag: str  # e.g. "v339-bot.4" (firmware/manifest.json)
+    tag: str  # e.g. "v339-bot.5" (firmware/manifest.json)
     label: str
     status: str  # "recommended" | "stock" | "superseded" | "defective"
     bots: bool  # carries the bot module (B command)
@@ -51,6 +51,14 @@ _DEFECTIVE = {
         "v339-bot.1", "V339 + bot module (bot.1)", "defective", True, "hook_throttle",
         "faulty bot hook: the throttle overwrites the controller word address, so the bots' "
         "cars do not stop — do not flash"),
+    "1657008f732b8bda2e3f1a6f2807b52e59a71b356c9151cf9f6f80768f7f56a4": KnownImage(
+        "v339-bot.4", "V339 + bot module (bot.4)", "defective", True, "slot_state",
+        "faulty bot build: its state sits in firmware RAM (slot status and button press bytes), so "
+        "bot control flickers and throttle values are garbage — do not flash"),
+    "0ee3eb1a6753dc45e4a09f58b56acca8d0e526c5cf44c9f1fbcca0976ca62c9d": KnownImage(
+        "v339-bot.3", "V339 + bot module (bot.3)", "defective", True, "slot_state",
+        "faulty bot build: its state sits in firmware RAM (slot status and button press bytes), so "
+        "bot control flickers and throttle values are garbage — do not flash"),
 }
 STATUS_ORDER = {"recommended": 0, "stock": 1, "superseded": 2, "unknown": 3, "defective": 4}
 

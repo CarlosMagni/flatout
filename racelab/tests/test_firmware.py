@@ -68,9 +68,9 @@ def test_name_proves_nothing():
 
 def test_known_image_table():
     status = {sha[:8]: k.status for sha, k in KNOWN_IMAGES.items()}
-    assert status["1657008f"] == "recommended"   # v339-bot.4 (built with the pinned avr-gcc 5.4.0)
-    assert status["0ee3eb1a"] == "superseded"    # v339-bot.3 (avr-gcc 9.5.0)
+    assert status["4a0a514b"] == "recommended"   # v339-bot.5: state in free RAM + firmware watchdog
     assert status["2e21d0c8"] == status["35f452f4"] == "defective"
+    assert status["0ee3eb1a"] == status["1657008f"] == "defective"   # bot.3 / bot.4: state in firmware RAM
     assert all(k.warning and k.issue for k in KNOWN_IMAGES.values() if k.status == "defective")
     assert all(len(sha) == 64 for sha in KNOWN_IMAGES)
 
