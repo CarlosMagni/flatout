@@ -104,9 +104,13 @@ def create_web_app(app: RaceLabApp) -> web.Application:
         return _json(list(app.log))
 
     async def post_firmware(request: web.Request):
-        data = await request.content.read(MAX_UPLOAD + 1)
-        if len(data) > MAX_UPLOAD:
-            return _json({"ok": False, "error": "file too large for a CU image"}, 413)
+        # read() returns whatever has arrived so far: loop until the end of the body
+        data = bytearray()
+        while chunk := await request.content.read(64 * 1024):
+            data += chunk
+            if len(data) > MAX_UPLOAD:
+                return _json({"ok": False, "error": "file too large for a CU image"}, 413)
+        data = bytes(data)
         try:
             info = app.add_firmware(data, request.query.get("name", "image.HMF"))
         except OpError as e:
