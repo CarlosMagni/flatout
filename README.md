@@ -5,8 +5,9 @@
 Race management and software drivers for **Carrera Digital 124/132** slot-car
 tracks, from a laptop. RaceLab talks to the Control Unit (CU) through the
 Carrera AppConnect Bluetooth adapter (item 30369) or a serial cable, runs your
-races, and — with a custom CU firmware — lets software drive the cars: a fader in the UI,
-a local autopilot, or your own agent (reinforcement learning) through an API.
+races, and lets software drive the cars — on a stock CU, nothing to flash: a
+fader in the UI, a local autopilot, or your own agent (reinforcement learning)
+through an API.
 
 > **Status: early but playable.** Everything runs against the built-in
 > virtual CU; real-hardware validation is in progress
@@ -17,11 +18,13 @@ a local autopilot, or your own agent (reinforcement learning) through an API.
 - **Race control** — CU start lights, live timing, practice, qualifying, race,
   endurance, elimination; fuel and pit stops, position tower, session history
   with lap charts, a **big-screen view** readable from across the room.
-- **Software drivers** (custom firmware required, see below) — on any of the 6
-  controller slots: manual fader, autopilots (constant throttle, target lap
-  time with a learned throttle ceiling, throttle map, rival), or an external
-  agent. Safety first: throttle forced to 0 during start lights, dead-man for
-  agents, emergency stop, zero throttle on reconnection and on exit.
+- **Software drivers ("bots")** — on any of the 6 controller slots, with the CU
+  as it is (stock firmware V339, see [Bots](#bots-on-a-stock-cu)): manual
+  fader, autopilots (constant throttle, target lap time with a learned throttle
+  ceiling, throttle map, rival), or an external agent. One click turns them on
+  (**With bots** at the top of the screen). Safety first: throttle forced to 0
+  during start lights, dead-man for agents, emergency stop, zero throttle on
+  reconnection and on exit.
 - **API for agents** — JSON over WebSocket and REST, a Python client and a
   [Gymnasium](https://gymnasium.farama.org/)-style environment (`racelab.client`).
 - **Track connectors** — any program (e.g. an overhead camera) can publish the
@@ -29,10 +32,10 @@ a local autopilot, or your own agent (reinforcement learning) through an API.
   format as the simulator.
 - **Virtual CU** — a simulated track, cars and firmware: try everything, write
   and test agents, without hardware.
-- **CU firmware flashing** from the app — the images are built from source
-  (stock and bot firmware, identified by SHA-256), checked before sending,
-  rollback to stock, recovery mode. See
-  [Flash a custom CU firmware](#flash-a-custom-cu-firmware-from-the-app) below.
+- **CU firmware flashing** (advanced option, not needed for bots) — the images
+  are built from source (stock and bot firmware, identified by SHA-256),
+  checked before sending, rollback to stock, recovery mode. See
+  [Advanced: flash a CU firmware](#advanced-flash-a-cu-firmware) below.
 - **English and French** — the interface is in English, with a French option.
 - **Cross-platform** — macOS, Windows, Linux; Python ≥ 3.11.
 
@@ -41,28 +44,41 @@ a local autopilot, or your own agent (reinforcement learning) through an API.
 The long-term goal: **AI drivers on a real track** — your own agent, trained
 against the simulator, driving a real slot car.
 
-- **Works today** (virtual CU): the full race manager, software drivers with a
-  custom firmware, an HTTP/WebSocket API, a Python client and a
+- **Works today** (virtual CU): the full race manager, software drivers on a
+  stock CU, an HTTP/WebSocket API, a Python client and a
   [Gymnasium](https://gymnasium.farama.org/)-style environment — the connectors
   to plug in and train your own agent are already in place.
-- **In progress**: the last stretch of real-hardware validation (AppConnect
-  Bluetooth, firmware bench tests), more RL training helpers on top of the API
+- **In progress**: the last stretch of real-hardware validation (bots over the
+  AppConnect Bluetooth, firmware bench tests), more RL training helpers on top of the API
   (training scenarios, reward shaping), a camera track connector for real car
   positions, and pit stops for AI drivers.
 
-## Flash a custom CU firmware from the app
+## Bots on a stock CU
 
-**Software drivers are enabled by the firmware, not the app**: flash a CU
-firmware that understands the extra `B` command, and any controller slot can
-be driven by the app, an autopilot or your own agent. RaceLab does the update
-itself — panel **System → CU firmware** — over Bluetooth or serial, with
-confirmation, progress, recovery mode, and the image's SHA-256 shown before
-you flash (always check the hash, not the file name).
+The stock CU firmware (V339, the current one) already has a command, `C`, that
+lets the host hold the throttle of any of the 6 controller slots — the CU then
+treats it exactly like a hand controller: start lights, false starts, fuel. So
+**bots need no firmware update**: connect the CU, click **With bots** at the
+top of the screen (or **Turn on bots** on the Race screen), and switch on the
+cars the computer should drive. Everything else stays as it was: a car that is
+not switched on is driven by its controller.
+
+If the app goes silent (killed, Bluetooth lost), the CU itself gives every car
+back to its controller after about 750 ms. The command is specified in
+[`docs/bot-protocol.md`](docs/bot-protocol.md).
+
+## Advanced: flash a CU firmware
+
+Not needed for bots. RaceLab can still update the CU firmware itself — panel
+**System → Advanced options** — over Bluetooth or serial, with confirmation,
+progress, recovery mode, and the image's SHA-256 shown before you flash (always
+check the hash, not the file name). It is there for tinkerers and for features
+to come.
 
 | Image to flash | What it does |
 |---|---|
-| the **stock firmware** image | a stock CU again — the safe rollback, and the no-risk way to rehearse the update |
-| a **custom firmware** image | unlocks software drivers (bots) on all 6 slots — and otherwise behaves exactly as before: the add-on stays inactive until an app sends the bot command |
+| the **stock firmware** image | a stock CU again — the safe rollback, and the no-risk way to rehearse the update; also brings an older CU to V339 |
+| the **bot firmware** image | adds the `B` bot command (bots on a CU where `C` is not available) and a firmware watchdog — and otherwise behaves exactly as before |
 
 - Test the whole flow without risk against the virtual CU:
   `racelab --sim --stock-firmware`.
@@ -98,12 +114,14 @@ python3 -m venv .venv
 
 ## Firmware
 
-Software drivers need a CU firmware that understands an extra serial command,
-`B` (throttle, lane change, hand back to the controller) — specified in
-[`docs/bot-protocol.md`](docs/bot-protocol.md). Without it, RaceLab works in
-Classic mode (races with physical controllers); Advanced mode is only enabled
-when the CU responds to the `B` command. Everything firmware lives in
-[`firmware/`](firmware/README.md), as two projects:
+Bots do not need a custom firmware (see [above](#bots-on-a-stock-cu)): the app
+uses the stock firmware's `C` command on a V339 CU, and the bot module's `B`
+command on a CU flashed with it. Both are specified in
+[`docs/bot-protocol.md`](docs/bot-protocol.md). On a CU that has neither, RaceLab
+runs in **Normal** mode only (races with hand controllers).
+
+Everything firmware lives in [`firmware/`](firmware/README.md), as two projects
+— the base for going further than the stock CU allows:
 
 | | **Bot module** — `firmware/bot/` | **V339 in C** — `firmware/reconstruction/` |
 |---|---|---|
@@ -123,9 +141,11 @@ from public community documentation and our own observations.
 
 Slot cars can leave the track at speed. When software drives a car, keep a hand
 near the track power supply during first tests. RaceLab cuts bot throttle on
-every failure it can see, but if the app is killed or the Bluetooth link never
-comes back, the CU keeps the last throttle it received — only the firmware can
-fix that. Test any firmware with the car lifted first (see the
+every failure it can see; if the app is killed or the Bluetooth link never
+comes back, the CU takes over: with the stock `C` command every car goes back to
+its controller after about 750 ms (a car with no controller plugged in stops),
+with the bot firmware (`v339-bot.5`) bot cars are held at throttle 0 after about
+a second. Try bots and any firmware with the car lifted first (see the
 [bench test](docs/user-guide.md#before-the-first-real-test-the-bench)).
 
 ## Documentation
@@ -138,7 +158,7 @@ fix that. Test any firmware with the car lifted first (see the
 | [`docs/architecture.md`](docs/architecture.md) | modules and their contracts |
 | [`racelab/examples/`](racelab/examples) | agents and a track connector |
 | [`docs/protocol.md`](docs/protocol.md) | CU serial / Bluetooth protocol |
-| [`docs/bot-protocol.md`](docs/bot-protocol.md) | the `B` command (software drivers) |
+| [`docs/bot-protocol.md`](docs/bot-protocol.md) | the `C` and `B` commands (software drivers) |
 
 An index is in [`docs/README.md`](docs/README.md).
 

@@ -52,6 +52,9 @@ class ConnectionConfig:
     connect_timeout: float = 20.0
     reconnect_delay: float = 1.5
     max_timeouts: int = 3  # missed replies in a row before declaring the link lost
+    # how software drivers reach the cars: "auto" = the stock C table on a V339 CU
+    # (no custom firmware needed), else the B command of the bot module; "C" / "B" force one
+    bot_transport: str = "auto"
 
 
 @dataclass
@@ -91,6 +94,7 @@ class ApiConfig:
 @dataclass
 class SimConfig:
     bot_firmware: bool = True  # False = simulate the stock firmware (no B command)
+    firmware: str = "339"  # firmware version the virtual CU reports (C table only proven on 339)
     humans: list[int] = field(default_factory=lambda: [1, 2])  # slots held by simulated "humans"
     latency_ms: float = 12.0  # simulated BLE round trip
     jitter_ms: float = 6.0
@@ -194,6 +198,8 @@ def validate(cfg: Config) -> None:
         raise ConfigError("[app] mode must be 'classic' or 'advanced'")
     if cfg.connection.transport not in ("none", "auto", "ble", "serial", "sim"):
         raise ConfigError("[connection] transport: none | auto | ble | serial | sim")
+    if cfg.connection.bot_transport not in ("auto", "C", "B"):
+        raise ConfigError("[connection] bot_transport: auto | C | B")
     if not 0 <= cfg.safety.max_throttle <= 15:
         raise ConfigError("[safety] max_throttle must be between 0 and 15")
     if cfg.safety.heartbeat_ms < 100:

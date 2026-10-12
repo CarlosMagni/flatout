@@ -59,9 +59,14 @@ export class FirmwarePanel {
     this.buildNote = h("p.note");
     this.buildBox = h("div.fw-build.hidden", {}, this.buildNote, this.buildBtn);
     this.progress = this.buildProgress();
-    this.el = h("section.panel.sys-panel.fw", {},
-      h("div.panel-head", {}, h("h2", { text: t("fw.title") }), h("span.spacer"), this.importBtn, this.file),
+    // advanced option: bots do not need a firmware update, so the panel stays folded
+    // unless an update is running or the CU is waiting in its bootloader
+    this.el = h("details.panel.sys-panel.fw.adv", {},
+      h("summary.adv-summary", {},
+        h("span.adv-text", {}, h("h2", { text: t("fw.adv_title") }), h("span.faint", { text: t("fw.adv_sub") }))),
       h("div.panel-body", {},
+        h("p.note.adv-note", { text: t("fw.adv_note") }),
+        h("div.panel-head.fw-head", {}, h("h2", { text: t("fw.title") }), h("span.spacer"), this.importBtn, this.file),
         this.current,
         this.buildBox,
         this.list,
@@ -184,11 +189,12 @@ export class FirmwarePanel {
     this.state = state;
     const fw = state.firmware || { state: "idle" };
     const link = state.link || {};
-    const sig = JSON.stringify([fw, link.state, link.version, link.bots_supported, state.session?.state, this.selected]);
+    const sig = JSON.stringify([fw, link.state, link.version, link.bot_module, state.session?.state, this.selected]);
     if (!force && sig === this.sig) return;
     this.sig = sig;
 
-    const fwLabel = { true: t("fw.bots_detected"), false: t("fw.bots_absent"), null: t("fw.bots_unknown") }[link.bots_supported];
+    // what the firmware is (bots module or not), whether or not bots are available
+    const fwLabel = { true: t("fw.bots_detected"), false: t("fw.bots_absent") }[link.bot_module] ?? t("fw.bots_unknown");
     this.current.replaceChildren(
       h("span.dot." + (link.state === "connected" ? "ok" : link.state === "updating" ? "warn" : "bad")),
       h("span", {}, link.state === "connected"
@@ -199,6 +205,10 @@ export class FirmwarePanel {
     const sessionBusy = !IDLE_STATES.has(state.session?.state);
     const connected = link.state === "connected";
     const stuck = fw.state === "failed" || (link.state === "lost" && UPDATE_MODE_ERROR.test(link.error || ""));
+    if ((busy || stuck) && !this.opened) {
+      this.opened = true; // unfold once; the user may fold it again
+      this.el.open = true;
+    }
     const image = this.images.find((i) => i.id === this.selected);
 
     const defective = image?.status === "defective"; // refused by the server too
@@ -231,7 +241,7 @@ export class FirmwarePanel {
     if (fw.state === "done") {
       const r = fw.result || {};
       setText(p.stage, t("fw.done"));
-      const bots = r.bots_supported ? t("fw.bots_detected") : r.bots_supported === false ? t("fw.bots_absent") : t("fw.bots_unknown");
+      const bots = r.bot_module ? t("fw.bots_detected") : r.bot_module === false ? t("fw.bots_absent") : t("fw.bots_unknown");
       setText(p.detail, `${t("fw.cu_version", { version: r.version ?? "?", bots })} · ${fw.image?.name ?? ""}`);
     } else if (fw.state === "failed") {
       setText(p.stage, t("fw.failed"));

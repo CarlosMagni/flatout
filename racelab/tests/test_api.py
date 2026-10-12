@@ -108,7 +108,7 @@ def test_ws_agent_drives_a_car_and_deadman(tmp_path):
                 # (400 ms here), which a slow runner can miss entirely
                 for _ in range(100):
                     assert (await call(rid, "bot.act", slot=0, throttle=throttle))["ok"]
-                    if app.sim.bot_gas[0] == throttle and app.sim.bot_mask & 1:
+                    if app.sim.host_throttle(0) == throttle:
                         return True
                     await asyncio.sleep(0.05)
                 return False
@@ -116,12 +116,12 @@ def test_ws_agent_drives_a_car_and_deadman(tmp_path):
             assert (await call(1, "bot.claim", slot=0, free=True))["ok"]
             assert await drive(2, 7)
             # the agent goes silent: dead-man -> throttle 0 on the CU
-            assert await wait_until(lambda: app.sim.bot_gas[0] == 0, timeout=3)
+            assert await wait_until(lambda: app.sim.host_throttle(0) == 0, timeout=3)
             assert app.bots.slots[0].gate == "deadman"
             # priority E-STOP
             assert await drive(3, 9)
             assert (await call(4, "estop"))["ok"]
-            assert await wait_until(lambda: app.sim.bot_gas[0] == 0)
+            assert await wait_until(lambda: app.sim.host_throttle(0) == 0)
             assert (await call(5, "estop.clear"))["ok"]
             # another agent cannot drive this slot
             r = await op(client, "bot.act", slot=0, throttle=15)
@@ -129,11 +129,11 @@ def test_ws_agent_drives_a_car_and_deadman(tmp_path):
             await ws.close()
             # agent disconnects: throttle 0, the bot stays in charge of the slot
             assert await wait_until(lambda: app.bots.slots[0].agent is None)
-            assert app.sim.bot_mask & 1 and app.sim.bot_gas[0] == 0
+            assert app.sim.host_throttle(0) == 0
         finally:
             await stopped(app, client)
         # clean shutdown: control handed back to the controller
-        assert app.sim.bot_mask == 0
+        assert all(app.sim.host_throttle(slot) is None for slot in range(6))
 
     run(main())
 
@@ -167,17 +167,17 @@ def test_link_drop_forces_zero_after_reconnect(tmp_path):
         try:
             await op(client, "bot.take", slot=2, driver="manual")
             await op(client, "bot.throttle", slot=2, value=8)
-            assert await wait_until(lambda: app.sim.bot_gas[2] == 8)
+            assert await wait_until(lambda: app.sim.host_throttle(2) == 8)
             assert (await op(client, "sim.drop_link", seconds=0.5))["ok"]
             assert await wait_until(lambda: app.link_info["state"] == "lost")
             assert await wait_until(lambda: app.link_info["state"] == "connected", timeout=6)
             # docs/bot-protocol.md §1: throttle 0 forced on reconnection, no resume at 8
-            assert await wait_until(lambda: app.sim.bot_gas[2] == 0)
+            assert await wait_until(lambda: app.sim.host_throttle(2) == 0)
             await asyncio.sleep(0.3)
-            assert app.sim.bot_gas[2] == 0 and app.bots.slots[2].manual == 0
+            assert app.sim.host_throttle(2) == 0 and app.bots.slots[2].manual == 0
             assert "reconnect" not in app.link.holds
             await op(client, "bot.throttle", slot=2, value=5)
-            assert await wait_until(lambda: app.sim.bot_gas[2] == 5)
+            assert await wait_until(lambda: app.sim.host_throttle(2) == 5)
         finally:
             await stopped(app, client)
 
@@ -186,7 +186,9 @@ def test_link_drop_forces_zero_after_reconnect(tmp_path):
 
 def test_classic_mode_and_stock_firmware(tmp_path):
     async def main():
-        app, client = await started(make_config(tmp_path, mode="classic", bot_firmware=False))
+        cfg = make_config(tmp_path, mode="classic", bot_firmware=False)
+        cfg.sim.firmware = "337"  # an older CU: no proven C table, no bot module -> no software drivers
+        app, client = await started(cfg)
         try:
             r = await op(client, "bot.take", slot=0, driver="manual")
             assert r["ok"] is False and "advanced" in r["error"]
@@ -194,9 +196,9 @@ def test_classic_mode_and_stock_firmware(tmp_path):
             r = await op(client, "race.setup", settings={"type": "training"})
             assert r["ok"] is False
             assert (await op(client, "race.setup", settings={"type": "race", "laps": 5}))["ok"]
-            # no bot module on the CU: advanced mode is refused
+            # this CU cannot take software drivers: bot mode is refused
             r = await op(client, "mode.set", mode="advanced")
-            assert r["ok"] is False and "bot firmware" in r["error"]
+            assert r["ok"] is False and "software drivers" in r["error"]
             assert app.mode == "classic"
             r = await op(client, "bot.take", slot=0, driver="manual")
             assert r["ok"] is False

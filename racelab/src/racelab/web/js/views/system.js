@@ -125,7 +125,7 @@ export class SystemView {
       h("h1.page", { text: t("nav.system") }),
       h("div.sys-cols", {},
         h("div.sys-col", {}, this.connPanel, this.buttonsPanel, this.consolePanel),
-        h("div.sys-col", {}, this.garagePanel, this.fwPanel.el, this.apiPanel)),
+        h("div.sys-col", {}, this.garagePanel, this.apiPanel, this.fwPanel.el)),
       this.logPanel,
       this.foot));
 
@@ -188,10 +188,12 @@ export class SystemView {
     setText(this.c.device.value, link.device || "—");
     setText(this.c.version.value, link.version ? `v${link.version}` : "—");
 
+    // bots: the stock CU takes them (C command), or the bot firmware module (B)
     const bots = link.bots_supported;
     const botsCls = bots === true ? "chip go" : bots === false ? "chip caution" : "chip";
     if (this.botsChip.className !== botsCls) this.botsChip.className = botsCls;
-    setText(this.botsChip, bots === true ? t("sys.bots_detected") : bots === false ? t("sys.bots_stock") : t("sys.bots_unknown"));
+    const ready = { C: t("sys.bots_ready_stock"), B: t("sys.bots_ready_module") }[link.bot_transport] || t("sys.bots_detected");
+    setText(this.botsChip, bots === true ? ready : bots === false ? t("sys.bots_stock") : t("sys.bots_unknown"));
 
     const rtt = link.rtt_ms;
     setText(this.c.rtt.value, rtt != null ? `${Math.round(rtt)} ms` : "—");

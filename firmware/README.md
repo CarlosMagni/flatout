@@ -1,15 +1,17 @@
 # firmware — Control Unit firmware V339 and the bot module, built from source
 
-The RaceLab bots need a CU firmware that understands one extra serial command, `B`
-(throttle, lane change, hand back to the controller). This folder builds that firmware
-**from source**:
+**RaceLab bots do not need any of this**: on a stock V339 CU they use the firmware's own
+`C` command (see [`docs/bot-protocol.md`](../docs/bot-protocol.md)). This folder is for
+going further than the stock CU allows. It builds, **from source**:
 
 - **the V339 firmware rebuilt from C** (`reconstruction/`): every function of the stock
   firmware rewritten in C until it compiles to exactly the original bytes. With the
   toolchain's start-up code and libraries, the image it builds is byte-identical to the
   stock firmware (`v339-stock`);
 - **the bot module** (`bot/`): about 300 bytes of C and asm stubs in free flash, plus three
-  `jmp` hooks into the stock code (`v339-bot.N`).
+  `jmp` hooks into the stock code (`v339-bot.N`). It adds one serial command, `B`
+  (throttle, lane change, hand back to the controller, per slot) and a firmware watchdog;
+  RaceLab uses it when `C` is not available.
 
 No firmware image is stored in the repository: `manifest.json` records each image's tag and
 SHA-256, and `build.py` produces the images into `build/` (ignored by git).
@@ -71,7 +73,7 @@ the app then shows it in red and refuses to flash it.
 
 ## Flash
 
-From the app: System → CU firmware (see the
+From the app: System → Advanced options (see the
 [user guide](../docs/user-guide.md#updating-the-cu-firmware)). The factory bootloader
 (`0x3800+`) is never written: a failed update can always be re-flashed.
 

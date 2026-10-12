@@ -374,6 +374,16 @@ a.hrow:focus-visible { outline: 2px solid var(--text-2); outline-offset: -2px; }
 
 /* ------------------------------------------------------------ CU firmware */
 
+/* advanced options (folded firmware panel) */
+.adv > summary { display: flex; align-items: center; gap: 10px; padding: 14px 16px; list-style: none; cursor: pointer; }
+.adv > summary::-webkit-details-marker { display: none; }
+.adv > summary::before { content: "›"; width: 10px; color: var(--text-3); transition: transform .12s; }
+.adv[open] > summary::before { transform: rotate(90deg); }
+.adv-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.adv-text h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.adv-text .faint { font-size: 12.5px; }
+.adv .adv-note { margin: 0 0 6px; }
+.adv .fw-head { padding: 12px 0 10px; }
 .fw-current { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-weight: 550; }
 .fw-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .fw-item {

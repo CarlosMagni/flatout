@@ -126,8 +126,8 @@ class RaceLabApp:
         self.log: deque[dict[str, Any]] = deque(maxlen=200)
         self.link_info: dict[str, Any] = {
             "state": "connecting", "transport": cfg.connection.transport, "device": None,
-            "version": None, "bots_supported": None, "error": None,
-            "rtt_ms": None, "rx_per_s": 0.0, "tx_per_s": 0.0, "bot_tx_per_s": 0.0, "queue": 0,
+            "version": None, "bots_supported": None, "bot_transport": None, "bot_module": None,
+            "error": None, "rtt_ms": None, "rx_per_s": 0.0, "tx_per_s": 0.0, "bot_tx_per_s": 0.0, "queue": 0,
         }
 
         self._link_gen = 0
@@ -160,7 +160,8 @@ class RaceLabApp:
         transport, device, opener = self._make_opener()
         self.link_info.update(
             state="idle" if opener is None else "connecting", transport=transport, device=device,
-            version=None, bots_supported=None, error=None, rtt_ms=None)
+            version=None, bots_supported=None, bot_transport=None, bot_module=None, error=None,
+            rtt_ms=None)
         if opener is None:
             self.link = _IdleLink()
             return
@@ -307,7 +308,8 @@ class RaceLabApp:
         elif isinstance(msg, LinkState):
             prev = self.link_info["state"]
             self.link_info.update(state=msg.state, version=msg.version, error=msg.error,
-                                  bots_supported=msg.bots_supported)
+                                  bots_supported=msg.bots_supported, bot_transport=msg.bot_transport,
+                                  bot_module=msg.bot_module)
             if msg.device:
                 self.link_info["device"] = msg.device
             self.bots.on_link(msg)
@@ -329,11 +331,12 @@ class RaceLabApp:
 
     def _link_log(self, msg: LinkState) -> None:
         if msg.state == "connected":
-            fw = {True: "bot firmware detected", False: "stock firmware (no bots)",
-                  None: "firmware not probed"}[msg.bots_supported]
-            self._log("info", f"CU connected ({self.link_info['transport']}, v{msg.version}) — {fw}")
+            how = {"C": "bots ready (the CU as it is, no firmware update needed)",
+                   "B": "bots ready (bot firmware module)"}.get(
+                msg.bot_transport, "bots unavailable on this CU")
+            self._log("info", f"CU connected ({self.link_info['transport']}, v{msg.version}) — {how}")
             if self.preferred_mode == "advanced" and msg.bots_supported is False:
-                self._log("warn", "Advanced mode unavailable on this CU (no bot module): classic mode")
+                self._log("warn", "Bots unavailable on this CU: normal mode")
         elif msg.state == "lost":
             self._log("warn", f"CU link lost{f': {msg.error}' if msg.error else ''} — reconnecting…")
         elif msg.state == "updating":
@@ -376,7 +379,8 @@ class RaceLabApp:
             "session": self.engine.settings.to_dict(),
             "mode": self.mode,
             "drivers": [dataclasses.asdict(d) for d in self.cfg.drivers],
-            "link": {k: self.link_info.get(k) for k in ("transport", "version", "bots_supported")},
+            "link": {k: self.link_info.get(k) for k in ("transport", "version", "bots_supported",
+                                                         "bot_transport", "bot_module")},
             "started": time.time(),
         })
         self._recording = True
@@ -466,7 +470,8 @@ class RaceLabApp:
         return f"#{slot + 1}"
 
     def _mode_label(self) -> str:
-        return "advanced" if self.mode == "advanced" else "classic"
+        # what the UI calls the modes: "classic" is shown as normal, "advanced" as with bots
+        return "bots" if self.mode == "advanced" else "normal"
 
     # ------------------------------------------------------------ commands
 
@@ -648,11 +653,11 @@ class RaceLabApp:
         if info["bots_supported"] is True:
             return None
         if info["bots_supported"] is False:
-            return "the CU does not have the bot firmware (B module missing)"
+            return f"this CU (firmware {info.get('version') or '?'}) cannot take software drivers"
         return "CU not verified yet: wait for the connection"
 
     def _apply_mode(self) -> None:
-        """Effective mode = preference, except advanced without detected bot firmware."""
+        """Effective mode = preference, except advanced when the CU cannot take software drivers."""
         reason = self.advanced_unavailable()
         mode = "advanced" if self.preferred_mode == "advanced" and reason is None else "classic"
         if mode == self.mode:
@@ -662,9 +667,9 @@ class RaceLabApp:
         self.mode = mode
         self.bots.enabled = mode == "advanced"
         if mode == "advanced":
-            self._log("info", "Advanced mode: bot firmware detected")
+            self._log("info", "Bots on")
         elif self.preferred_mode == "advanced" and self.link_info["bots_supported"] is False:
-            self._log("warn", f"Classic mode: {reason}")
+            self._log("warn", f"Normal mode: {reason}")
         self._event("mode", {"mode": mode, "preferred": self.preferred_mode})
 
     def _op_mode(self, args, client):
@@ -681,8 +686,8 @@ class RaceLabApp:
         self.cfg.mode_choice = mode
         self._save()
         self._apply_mode()
-        if mode == self.mode:
-            self._log("info", f"{self._mode_label().capitalize()} mode")
+        if mode == self.mode == "classic":  # turning bots on already logs "Bots on"
+            self._log("info", "Normal mode")
         return self.mode
 
     def _op_car_program(self, args, client):
@@ -838,9 +843,10 @@ class RaceLabApp:
     def _firmware_verified(self, st: LinkState) -> None:
         fw = self.fw
         fw.update(state="done", stage="done",
-                  result={"version": st.version, "bots_supported": st.bots_supported})
+                  result={"version": st.version, "bots_supported": st.bots_supported,
+                          "bot_module": st.bot_module})
         bots = {True: "bot module detected", False: "firmware without bot module", None: "not probed"}
-        self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bots_supported]}")
+        self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bot_module]}")
         self._event("firmware", self._op_fw_status({}, ""))
 
     def _firmware_failed(self, error: str) -> None:

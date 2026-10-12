@@ -21,7 +21,8 @@ cd carreralib && ../.venv/bin/python -m pytest tests -q    # carreralib with our
 ```
 
 Everything can be developed against the virtual CU (`--sim`, or
-`--sim --stock-firmware` to test Classic mode and firmware updates).
+`--sim --stock-firmware` to test bots on a stock CU (`C` command) and firmware updates;
+set `[sim] firmware = "337"` to see an older CU that cannot take bots).
 
 ## Code
 

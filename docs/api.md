@@ -4,7 +4,9 @@ One API for both the web UI and agents (RL, scripts): JSON over WebSocket,
 with a REST mirror for simple scripts. By default the server listens on
 `127.0.0.1:8130` only; set `[api] token` in the TOML file to require a token.
 
-- Driving (`bot.*`) only exists in **Advanced mode**, and only with the bot firmware.
+- Driving (`bot.*`) only exists in **advanced mode** (shown as "With bots" in the UI),
+  on a CU that takes software drivers: a stock V339 (`C` command) or one with the bot
+  firmware module (`B`), see [bot-protocol.md](bot-protocol.md).
 - An agent can only drive the slots it has claimed (`bot.claim`).
 - **Dead-man switch**: an agent that sends no action for `[safety] deadman_ms`
   (600 ms by default) has its throttle forced to 0. An agent that disconnects
@@ -73,7 +75,7 @@ is `hello.client`),
 | `track.set` / `track.positions` / `track.clear` | see [Track connector](#track-connector-track-shape--positions) | publish the track shape and car positions |
 | `tower.reset` | | clear the position tower display |
 | `log` | | the recent log entries (also sent in `hello`) |
-| `console.send` | `frame` | (Advanced mode) send one raw frame, e.g. `"?"`; returns the CU's answer. `G`, `E`, `F`, `C` and `B` are refused |
+| `console.send` | `frame` | (advanced mode) send one raw frame, e.g. `"?"`; returns the CU's answer. `G`, `E`, `F`, `C` and `B` are refused |
 | `console.trace` | `polls` (bool) | include the `?` polls in the raw-frame subscription |
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |
 | `cu.connect` | `transport: none\|ble\|serial\|sim`, `device?`, `stock?` | switch CU (outside a session): bots are stopped and handed back on the old one first; the choice is remembered |
@@ -93,7 +95,10 @@ See [architecture.md](architecture.md) §4 for `session`, `cu`, `cars`. In addit
   "mode": "advanced",
   "estop": false,
   "link": {"state": "connected", "transport": "ble", "version": "5339",
-           "bots_supported": true, "rtt_ms": 21.4, "rx_per_s": 38.0, "error": null, …},
+           "bots_supported": true,   // software drivers available on this CU
+           "bot_transport": "C",     // "C" (stock CU) | "B" (bot firmware module) | null
+           "bot_module": false,      // the bot firmware module answered
+           "rtt_ms": 21.4, "rx_per_s": 38.0, "error": null, …},
   "bots": [{"slot": 0, "active": true, "driver": "api", "throttle": 7, "requested": 7,
             "applied": 7, "gate": null, "agent": "rl-01", "api_age_ms": 40,
             "lane_pending": false, "profile": {…}}],

@@ -57,8 +57,10 @@ class LinkState:
     transport: str  # "ble" | "serial" | "sim"
     device: str | None = None
     version: str | None = None  # ex. "5339"
-    bots_supported: bool | None = None  # None = not probed yet
+    bots_supported: bool | None = None  # software drivers available (C or B); None = not probed yet
     error: str | None = None
+    bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | None
+    bot_module: bool | None = None  # the bot firmware module answers B
 
 
 @dataclass(frozen=True)

@@ -17,10 +17,11 @@ from carreralib.connection import Connection, TimeoutError
 
 logger = logging.getLogger(__name__)
 
-# Letters the app must never emit (docs/protocol.md §3 and §6):
-# G = bootloader, E/F = firmware update blocks, C = CU setting.
+# Letters the app must never emit as raw requests (docs/protocol.md §8):
+# G = bootloader, E/F = firmware update blocks (allowed in update mode only),
+# C = controller table, only through setctl() (strictly built frame).
 FORBIDDEN_LETTERS = frozenset(b"GEFC")
-FIRMWARE_LETTERS = frozenset(b"GEF")  # allowed in update mode only; C never
+FIRMWARE_LETTERS = frozenset(b"GEF")
 FIRMWARE_TIMEOUT_S = 5.0  # like carreralib.fw: the bootloader can be slow to answer
 
 Parsed = ControlUnit.Status | ControlUnit.Timer
@@ -65,13 +66,18 @@ class RaceControlUnit(ControlUnit):
         self.last_rtt: float | None = None
         self.firmware_mode = False  # update in progress: G/E/F allowed
 
-    def request(self, buf, maxlength=None):
+    def setctl(self, throttles, lanes=()):
+        """`C` frame: host values for controllers 0..5 (carreralib ctl_frame, stock V339)."""
+        return self.request(self.ctl_frame(throttles, lanes), _ctl=True)
+
+    def request(self, buf, maxlength=None, *, _ctl=False):
         """Send `buf` and return the response that starts with its letter.
 
         Raises CommandRejected on `#` / empty response, TimeoutError if nothing
         usable arrives before the deadline.
         """
-        if buf[0] in FORBIDDEN_LETTERS and not (self.firmware_mode and buf[0] in FIRMWARE_LETTERS):
+        allowed = (self.firmware_mode and buf[0] in FIRMWARE_LETTERS) or (_ctl and buf[0:1] == b"C")
+        if buf[0] in FORBIDDEN_LETTERS and not allowed:
             raise ValueError(f"command forbidden from the app: {buf[:1]!r}")
         letter = buf[0:1]
         t0 = time.monotonic()

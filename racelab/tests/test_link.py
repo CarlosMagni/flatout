@@ -18,8 +18,10 @@ from racelab.events import LinkState, StatusMsg, TimerMsg
 class FakeCU:
     """Minimal CU shared between connections (the firmware state survives outages)."""
 
-    def __init__(self, bots=True):
+    def __init__(self, bots=True, version=b"5339", ctl=True):
         self.bots = bots
+        self.version = version
+        self.ctl = ctl  # the CU (and its adapter) accepts the C table
         self.frames: list[bytes] = []
         self.timers: list[tuple[int, int, int]] = []
         self.lock = threading.Lock()
@@ -35,6 +37,10 @@ class FakeCU:
     def bot_frames(self):
         with self.lock:
             return [f for f in self.frames if f[:1] == b"B"]
+
+    def ctl_frames(self):
+        with self.lock:
+            return [f for f in self.frames if f[:1] == b"C"]
 
 
 class FakeConnection(Connection):
@@ -52,7 +58,7 @@ class FakeConnection(Connection):
             self.cu.frames.append(buf)
         letter = buf[:1]
         if letter == b"0":
-            self.reply = protocol.pack("c4sC", b"0", b"5339")
+            self.reply = protocol.pack("c4sC", b"0", self.cu.version)
         elif letter == b"?":
             if self.cu.timers:
                 adr, ts, sector = self.cu.timers.pop(0)
@@ -61,6 +67,8 @@ class FakeConnection(Connection):
                 self.reply = protocol.pack("cc8YYYBYC", b"?", b":", *[9] * 8, 0, 5, 0, 6)
         elif letter == b"B":
             self.reply = b"B" if self.cu.bots else b""
+        elif letter == b"C":
+            self.reply = b"C" if self.cu.ctl else b""
         else:
             self.reply = letter
         time.sleep(0.001)
@@ -93,11 +101,13 @@ def wait_for(cond, timeout=2.0):
 def make_link():
     links = []
 
-    def make(cu, **safety):
+    def make(cu, bot_transport="B", **safety):
+        """bot_transport "B" by default: most tests here check the bot module's protocol."""
         events = []
         s = SafetyConfig(heartbeat_ms=200, min_bot_interval_ms=40, **safety)
         link = CULink(cu.connect, transport="sim", device=None,
-                      conn_cfg=ConnectionConfig(timeout=0.2, reconnect_delay=0.05),
+                      conn_cfg=ConnectionConfig(timeout=0.2, reconnect_delay=0.05,
+                                                bot_transport=bot_transport),
                       safety=s, emit=events.append)
         link.start()
         links.append(link)
@@ -266,3 +276,76 @@ def test_commands_queue(make_link):
         link.send_raw(b"GB")
     with pytest.raises(ValueError):
         link.send_raw(b"B07")
+
+
+# ------------------------------------------------------------ stock C table (no custom firmware)
+
+def ctl_values(frame: bytes):
+    """Decode a C frame into (throttles, lanes) like the stock firmware: 0 = controller drives."""
+    vals, lanes = [], set()
+    for i in range(6):
+        t, lane = frame[1 + 2 * i], frame[2 + 2 * i]
+        v = ((t - 0x30) & 0xFF) | (0x10 if lane == ord("1") else 0)
+        vals.append(None if v == 0 else v & 0x0F)
+        if v & 0x10:
+            lanes.add(i)
+    return vals, lanes
+
+
+def test_auto_transport_uses_the_stock_c_table_on_v339(make_link):
+    cu = FakeCU(bots=False)                       # stock firmware: no B module
+    link, events = make_link(cu, bot_transport="auto")
+    assert link.bot_transport == "C" and link.bots_supported is True and link.bot_module is False
+    state = [e for e in events if isinstance(e, LinkState)][-1]
+    assert state.bot_transport == "C" and state.bots_supported
+    link.set_bot(2, 9)
+    assert wait_for(lambda: cu.ctl_frames() and ctl_values(cu.ctl_frames()[-1])[0][2] == 9)
+    vals, _ = ctl_values(cu.ctl_frames()[-1])
+    assert vals == [None, None, 9, None, None, None]   # the other slots stay on their controllers
+    assert not cu.bot_frames() or all(f == b"B0A" for f in cu.bot_frames())
+
+
+def test_c_table_heartbeat_hold_lane_release(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(0, 7)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][0] == 7)
+    n = len(cu.ctl_frames())
+    time.sleep(0.75)                              # nothing changes: frames keep coming (< 0.75 s expiry)
+    assert len(cu.ctl_frames()) - n >= 2
+    link.lane(0)
+    assert wait_for(lambda: 0 in ctl_values(cu.ctl_frames()[-1])[1])
+    assert wait_for(lambda: 0 not in ctl_values(cu.ctl_frames()[-1])[1], timeout=1.0)  # button released
+    link.set_bot(0, 0)                            # host-held stop: P, not "00"
+    assert wait_for(lambda: cu.ctl_frames()[-1][1:3] == b"P0")
+    link.set_bot(0, None)                         # handed back
+    assert wait_for(lambda: cu.ctl_frames()[-1][1:13] == b"0" * 12)
+    n = len(cu.ctl_frames())
+    time.sleep(0.5)
+    assert len(cu.ctl_frames()) == n              # no host value: no more frames
+
+
+def test_c_table_estop_holds_every_bot(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(1, 12)
+    link.set_bot(3, 5)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 12)
+    link.estop()
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0] == [None, 0, None, 0, None, None])
+
+
+def test_auto_transport_without_v339(make_link):
+    """C is only used on the firmware it was verified on; other CUs fall back to the B module."""
+    link, _ = make_link(FakeCU(bots=True, version=b"5337"), bot_transport="auto")
+    assert link.bot_transport == "B"
+    link2, _ = make_link(FakeCU(bots=False, version=b"5337"), bot_transport="auto")
+    assert link2.bot_transport is None and link2.bots_supported is False
+
+
+def test_c_rejected_falls_back(make_link):
+    cu = FakeCU(bots=True, ctl=False)             # e.g. an adapter that filters C
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(0, 6)
+    assert wait_for(lambda: link.bot_transport == "B")
+    assert wait_for(lambda: any(f.startswith(b"B0") and f != b"B0A" for f in cu.bot_frames()))

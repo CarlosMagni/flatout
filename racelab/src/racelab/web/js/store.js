@@ -128,6 +128,15 @@ export const driverOf = (slot) => store.meta?.drivers?.find((d) => d.slot === sl
 // Labels the server also sends: the dictionary wins, the server text is the fallback.
 export const sessionLabel = (type) => tOr(`session.${type}.label`, store.meta?.session_types?.[type]?.label) || type || t("session.fallback");
 export const sessionDescription = (type) => tOr(`session.${type}.description`, store.meta?.session_types?.[type]?.description) || "";
+// why bots cannot be turned on right now (null = they can), in the UI language;
+// the server only says whether and roughly why (advanced_unavailable)
+export function botsUnavailable(state) {
+  if (!state?.advanced_unavailable) return null;
+  const link = state.link || {};
+  if (link.transport === "none") return t("mode.why.no_cu");
+  if (link.bots_supported === false) return t("mode.why.old_cu", { version: link.version ?? "?" });
+  return t("mode.why.wait");
+}
 export const profileLabel = (kind) => tOr(`profile.${kind}.label`, store.meta?.profiles?.[kind]?.label) || kind;
 
 function localizeState(state) {

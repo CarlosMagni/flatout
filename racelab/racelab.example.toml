@@ -18,6 +18,7 @@ timeout = 1.0            # max wait for a CU reply (s)
 connect_timeout = 20.0
 reconnect_delay = 1.5
 max_timeouts = 3         # missed replies in a row before declaring the link lost
+bot_transport = "auto"   # software drivers: auto (stock C table on a V339 CU, else the bot module's B) | C | B
 
 [safety]
 heartbeat_ms = 500           # resend of the active bots' throttle
@@ -45,7 +46,8 @@ token = ""               # if set: required by the UI and the API (?token=… / 
 state_hz = 10            # default rate of the broadcast state (an agent can ask for up to 20)
 
 [sim]                    # virtual CU (racelab --sim)
-bot_firmware = true      # false = stock firmware (to test classic mode)
+bot_firmware = true      # false = stock firmware: bots through the C command, no B module
+firmware = "339"         # version the virtual CU reports; "337" = an older CU without bots
 humans = [1, 2]          # slots held by simulated "human" drivers
 latency_ms = 12
 jitter_ms = 6

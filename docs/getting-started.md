@@ -38,7 +38,17 @@ RaceLab remembers the choice. To change it: System → Connection.
 Session → pick the type → "Put on grid" → Race → "Start" (or the Space bar).
 STOP (or Esc) cuts every bot.
 
-## 5. Quit
+## 5. Race against the computer (bots)
+
+Race screen → **Turn on bots** (or **With bots** at the top). Switch on the cars
+the computer should drive: in **Auto**, a bot waits for the race to start, then
+drives on its own. The other cars stay on their controllers. **Back to normal**
+hands every car back.
+
+Nothing to install on the CU: bots work with the CU as it is (firmware V339, the
+current one).
+
+## 6. Quit
 
 System → **"Quit RaceLab"**: the bots are cut and handed back to the
 controllers. Closing the window is not enough: RaceLab keeps running in the
@@ -46,12 +56,14 @@ background.
 
 ## Before running bots on the real track
 
-Software drivers need a CU with modified firmware (the `B` command, see
-[bot-protocol.md](bot-protocol.md)); this firmware is **not** provided here.
-After any flash, do a bench test with the car lifted (throttle 3, 6, 0;
-controller ignored while the bot is active; a single lane change per press; STOP
-really cuts) before letting a bot run. Without this firmware, RaceLab works in
-Classic mode.
+The first time, do a bench test with the car lifted: a car switched on in
+**Manual**, fader at 3, 6, 0; controller ignored while the bot is active; a
+single lane change per press; STOP really cuts. Details in the
+[user guide](user-guide.md#before-the-first-real-test-the-bench).
+
+If the app says bots are unavailable, the CU is older than V339: it can be
+updated in System → Advanced options (see the
+[user guide](user-guide.md#updating-the-cu-firmware)).
 
 ## If something goes wrong
 

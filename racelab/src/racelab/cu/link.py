@@ -1,7 +1,7 @@
 """The link to the Control Unit: a single thread that owns the connection.
 
 Responsibilities (docs/bot-protocol.md, safety rules):
-- connection + automatic reconnection, version read, bot firmware probe;
+- connection + automatic reconnection, version read, bot transport (stock C table or B module);
 - continuous `?` poll -> StatusMsg / TimerMsg;
 - command queue (buttons, position tower, programming);
 - bot throttle: coalescing (≤ 1 send per slot per rail cycle), heartbeat,
@@ -42,6 +42,13 @@ from .unit import FORBIDDEN_LETTERS, CommandRejected, Parsed, RaceControlUnit
 logger = logging.getLogger(__name__)
 
 _UNKNOWN = object()  # throttle actually applied by the CU is unknown
+# C table (stock V339): the CU drops it ~750 ms after the last frame, so resend well before
+CTL_HEARTBEAT_S = 0.3
+CTL_LANE_PRESS_S = 0.12  # lane button held for at least one rail cycle (75 ms)
+CTL_FIRMWARE = "339"  # C semantics proven on V339 (firmware/reconstruction)
+# pause between two polls: a real CU link waits on I/O anyway, a virtual CU answers at once and
+# the loop would starve the app; bot commands, E-STOP and queued commands wake it immediately
+POLL_PAUSE_S = 0.004
 BOOTLOADER_WAIT_S = 2.0  # after `GB`, time for the bootloader to start (carreralib.fw)
 REBOOT_WAIT_S = 3.0  # after the last line, before looking for the rebooted CU
 
@@ -111,7 +118,12 @@ class CULink:
 
         self.state = "closed"
         self.version: str | None = None
-        self.bots_supported: bool | None = None
+        self.bots_supported: bool | None = None  # software drivers available (C or B)
+        self.bot_transport: str | None = None  # "C" | "B" | None
+        self.bot_module: bool | None = None  # the bot firmware module answers B
+        self._lane_until = [0.0] * 6  # C: lane button held until (monotonic)
+        self._ctl_last: object = None  # C: last frame sent (targets, lanes)
+        self._ctl_sent_at = 0.0
         self.trace = False  # raw frames to the console (excluding polls)
         self.trace_polls = False
 
@@ -268,7 +280,7 @@ class CULink:
     def _set_state(self, state: str, error: str | None = None) -> None:
         self.state = state
         self._emit(LinkState(state, self._transport, self._device, self.version,
-                             self.bots_supported, error))
+                             self.bots_supported, error, self.bot_transport, self.bot_module))
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -321,12 +333,36 @@ class CULink:
             self.version = cu.version()
         except (CommandRejected, CUTimeoutError) as e:
             raise LinkLost("the CU does not give its version (powered off, or stuck in update mode?)") from e
-        supported = cu.probe_bots()
+        module = cu.probe_bots()
+        transport = self._choose_transport(self.version, module)
         self._rebooting = False
         with self._lock:
-            self.bots_supported = supported
+            self.bot_module = module
+            self.bot_transport = transport
+            self.bots_supported = transport is not None
             target = list(self._target)
-        if supported:
+            self._ctl_last, self._lane_until = None, [0.0] * 6
+        if transport == "C":
+            # throttle 0 on the app's bots, every other slot on its controller
+            values = [0 if target[slot] is not None else None for slot in BOT_SLOTS]
+            try:
+                cu.setctl(values)
+            except CommandRejected:
+                # e.g. an adapter that filters C: fall back to the bot module if there is one
+                logger.error("the CU (or its adapter) rejects the C command")
+                transport = "B" if module else None
+                with self._lock:
+                    self.bot_transport = transport
+                    self.bots_supported = transport is not None
+            else:
+                with self._lock:
+                    self._ctl_last, self._ctl_sent_at = (tuple(values), frozenset()), time.monotonic()
+                for slot in BOT_SLOTS:
+                    self._mark_sent(slot, values[slot])
+                if module and not self._ever_connected and self._safety.release_all_on_connect:
+                    for slot in BOT_SLOTS:  # a previous B session may have left the module active
+                        cu.botrelease(slot)
+        if transport == "B":
             # no other frame before the CU is back in a known state:
             # throttle 0 on the app's bots, and (first connection) control handed
             # back on the other slots: a previous crash may have left a bot active.
@@ -353,6 +389,8 @@ class CULink:
             try:
                 self._service(cu)
                 timeouts = 0
+                if self._wake.wait(POLL_PAUSE_S):
+                    self._wake.clear()
             except CUTimeoutError as e:
                 timeouts += 1
                 logger.debug("CU timeout (%d): %s", timeouts, e)
@@ -364,7 +402,9 @@ class CULink:
                 last_stats = now
 
     def _service(self, cu: RaceControlUnit) -> None:
-        if self.bots_supported:
+        if self.bot_transport == "C":
+            self._service_ctl(cu)
+        elif self.bot_transport == "B":
             self._service_bots(cu)
         cmd = None
         with self._lock:
@@ -416,6 +456,53 @@ class CULink:
                 except CommandRejected:
                     logger.warning("lane change refused (slot %d)", slot)
 
+    def _choose_transport(self, version: str | None, module: bool) -> str | None:
+        """C on a V339 CU (stock or ours: no custom firmware needed), else B if the module answers."""
+        ctl = bool(version) and version[1:4] == CTL_FIRMWARE
+        pref = self._cfg.bot_transport
+        if pref == "C":
+            return "C" if ctl else None
+        if pref == "B":
+            return "B" if module else None
+        return "C" if ctl else ("B" if module else None)
+
+    def _service_ctl(self, cu: RaceControlUnit) -> None:
+        """Software drivers through the stock C table: one frame for the 6 controllers."""
+        now = time.monotonic()
+        heartbeat = min(self._safety.heartbeat_ms / 1000, CTL_HEARTBEAT_S)
+        min_gap = self._safety.min_bot_interval_ms / 1000
+        with self._lock:
+            urgent, self._urgent = self._urgent, False
+            pressed = {s for s in self._lane if self._target[s] is not None}
+            self._lane = set()
+            for slot in pressed:
+                self._lane_until[slot] = now + CTL_LANE_PRESS_S
+            target = tuple(self._target)
+            lanes = frozenset(s for s in BOT_SLOTS if self._lane_until[s] > now and target[s] is not None)
+            last, sent_at = self._ctl_last, self._ctl_sent_at
+        frame = (target, lanes)
+        active = any(t is not None for t in target)
+        if not (urgent or (frame != last and now - sent_at >= min_gap)
+                or (active and now - sent_at >= heartbeat)):
+            return
+        try:
+            cu.setctl(list(target), lanes)
+        except CommandRejected:
+            logger.error("the CU (or its adapter) rejects the C command")
+            with self._lock:
+                self.bot_transport = "B" if self.bot_module else None
+                self.bots_supported = self.bot_transport is not None
+                self._sent = [_UNKNOWN] * 6
+            self._set_state("connected", "C command rejected by the CU")
+            return
+        with self._lock:
+            self._ctl_last, self._ctl_sent_at = frame, now
+        self._stats["bot"] += 1
+        for slot in BOT_SLOTS:
+            if target[slot] is not None or last is None or last[0][slot] is not None:
+                self._mark_sent(slot, target[slot])
+                self._emit(BotSent(slot, target[slot], lane=slot in pressed, host_t=time.monotonic()))
+
     def _send_bot(self, cu: RaceControlUnit, slot: int, value: int | None) -> None:
         try:
             if value is None:
@@ -461,7 +548,17 @@ class CULink:
         with self._lock:
             active = [s for s in BOT_SLOTS if self._sent[s] is not None or self._target[s] is not None]
             supported = self.bots_supported
+            transport = self.bot_transport
         if not supported:
+            return
+        if transport == "C":
+            try:
+                if self._safety.release_on_exit:
+                    cu.setctl([None] * 6)
+                else:
+                    cu.setctl([0 if s in active else None for s in BOT_SLOTS])
+            except Exception:
+                logger.warning("could not release the C table (it expires by itself in ~0.75 s)")
             return
         for slot in active:
             try:
@@ -488,7 +585,9 @@ class CULink:
                 self._lane.clear()
                 self._target = [None] * 6
                 self._holds.discard("reconnect")
-            if not job.recovery and self.bots_supported:
+            if not job.recovery and self.bot_transport == "C":
+                cu.setctl([None] * 6)  # rails: no host value during the flash
+            if not job.recovery and self.bot_module:
                 for slot in BOT_SLOTS:  # rails: no active bot during the flash
                     cu.setbot(slot, 0)
                     cu.botrelease(slot)
@@ -526,11 +625,16 @@ class CULink:
                 self._sent = [None] * 6  # the CU restarts without bots (or stays in bootloader)
                 self._last_known = [None] * 6
         self.version, self.bots_supported = None, None
+        self.bot_transport, self.bot_module = None, None
         raise FirmwareFlashed()
 
     def unsafe_slots(self) -> list[int]:
-        """Slots whose last throttle acknowledged by the CU was not 0 (link lost at shutdown)."""
+        """Slots whose last throttle acknowledged by the CU was not 0 (link lost at shutdown).
+
+        None with the C table: the CU drops it by itself ~0.75 s after the last frame."""
         with self._lock:
+            if self.bot_transport == "C":
+                return []
             return [s for s in BOT_SLOTS if self._last_known[s] not in (None, 0)]
 
     def _dispatch(self, msg: Parsed) -> None:

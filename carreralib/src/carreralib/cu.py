@@ -177,6 +177,45 @@ class ControlUnit:
         """Reset the CU timer."""
         self.request(protocol.pack("cYYC", b"=", 1, 0))
 
+    @staticmethod
+    def ctl_frame(throttles, lanes=()):
+        """Build a `C` frame: controller values for addresses 0..5, all at once.
+
+        Stock CU firmware V339 reads this table *instead of* each physical
+        controller, so everything downstream (fuel, start-light hold, false
+        start detection) treats the values like a human's. `throttles` has 6
+        items: ``None`` leaves the address on its physical controller, 0..15
+        drives it from the host (0 holds the car stopped). `lanes` lists the
+        addresses whose lane-change button is pressed.
+
+        Per address two characters: the throttle, then ``1`` (button
+        pressed) or ``0``. A table value of 0 means "no host value", so a
+        host-held throttle of 0 is sent as ``P`` (0x20 after the ``0``
+        offset: a bit the firmware ignores, keeping the value non-zero).
+        """
+        if len(throttles) != 6:
+            raise ValueError("C needs 6 values (addresses 0..5)")
+        data = bytearray()
+        for address, value in enumerate(throttles):
+            if value is None:
+                data += b"00"
+                continue
+            if value < 0 or value > 15:
+                raise ValueError("Throttle value out of range")
+            data.append(ord("P") if value == 0 else ord("0") + value)
+            data.append(ord("1") if address in lanes else ord("0"))
+        checksum = (sum(c & 0xF for c in data) & 0xF) | 0x30
+        return b"C" + bytes(data) + bytes([checksum])
+
+    def setctl(self, throttles, lanes=()):
+        """Send a `C` frame (see :meth:`ctl_frame`).
+
+        The CU drops the whole table about 750 ms after the last frame (all
+        addresses back to their controllers): resend at least every 500 ms
+        while the host drives a car.
+        """
+        return self.request(self.ctl_frame(throttles, lanes))
+
     def setbot(self, address, value):
         """Set the throttle of software driver `address` (0..15).
 

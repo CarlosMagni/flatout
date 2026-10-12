@@ -1,17 +1,19 @@
 # RaceLab user guide
 
 The race app for Carrera Digital 124/132 tracks: timing, sessions, position
-tower, and **software drivers** thanks to a custom CU firmware (`B` command,
-see [bot-protocol.md](bot-protocol.md)). A WebSocket/REST API lets an agent
-(RL) drive one or several of the 6 cars, without a controller.
+tower, and **software drivers** ("bots") on the CU as it is — no firmware
+update (the stock firmware's `C` command, see [bot-protocol.md](bot-protocol.md)).
+A WebSocket/REST API lets an agent (RL) drive one or several of the 6 cars,
+without a controller.
 
-Two modes, same interface:
+Two modes, same interface, switched at the top of the screen:
 
-- **Classic**: the race is run as with the official app, with controllers
-  only. Works with the stock firmware.
-- **Advanced**: the 6 slots can switch to a software driver (manual fader,
-  autopilot, or AI agent through the API), "Beat the bot" and "AI training"
-  sessions, a diagnostic console.
+- **Normal**: the race is run as with the official app, everyone with a
+  controller.
+- **With bots**: the computer can drive any of the 6 cars (autopilot, manual
+  fader, or an agent through the API), next to the hand controllers; also "Beat
+  the bot" and "AI training" sessions and a diagnostic console. Available on a
+  CU with firmware V339 (the current one), or one flashed with the bot module.
 
 Screens: **Race**, **Session**, **History** and **System**.
 
@@ -48,14 +50,14 @@ From the command line (options are never remembered):
 .venv/bin/racelab                      # last chosen CU (or the welcome screen)
 .venv/bin/racelab --window             # in a dedicated window (Chrome/Brave/Edge)
 .venv/bin/racelab --sim                # virtual CU
-.venv/bin/racelab --sim --stock-firmware   # virtual CU without the bot module
+.venv/bin/racelab --sim --stock-firmware   # virtual CU with the stock firmware (bots through C)
 .venv/bin/racelab --ble [ADDRESS]      # AppConnect (without an address: search)
 .venv/bin/racelab --serial /dev/tty.usbserial-XXXX
-.venv/bin/racelab --classic            # Classic mode
+.venv/bin/racelab --classic            # Normal mode (no bots)
 .venv/bin/racelab --scan               # list the AppConnects and serial adapters in range
 ```
 
-Other options: `--advanced`, `-c FILE` (TOML), `--host`, `--port`,
+Other options: `--advanced` (with bots), `-c FILE` (TOML), `--host`, `--port`,
 `--no-browser`, `--data-dir DIR`, `-v`; see `racelab --help`.
 
 Only one RaceLab runs at a time: starting it again just opens the window.
@@ -81,10 +83,13 @@ All the configuration is documented in
 - Live ranking: laps, last lap (green = personal best, purple = best lap of
   the session), best lap, gap, interval, fuel (15 steps, like the Driver
   Display), pit stops.
-- Software drivers (Advanced mode): a "Bot" toggle per slot, then Manual
-  (0–15 fader with a safety detent above 12), Auto (profile: constant
-  throttle, target lap time, throttle map, rival) or AI (API agent). The Lane
-  button = lane change at the next switch.
+- **Bots**: in Normal mode, the card "Race against the computer" → **Turn on
+  bots** (or **With bots** at the top). Then one switch per car: on, the
+  computer drives it; off, its controller does. How it drives: **Auto**
+  (autopilot, the default: constant throttle, target lap time, throttle map or
+  rival — **Settings**; it waits for the race to start), **Manual** (0–15 fader
+  with a safety detent above 12) or **API** (an external agent). The Lane button
+  = lane change at the next switch. **Back to normal** hands every car back.
 - The autopilots do not handle pit stops yet: in the CU's fuel mode, a bot
   runs dry (flagged as out of fuel; bring it in with Lane at the pit
   entrance, or turn off the CU's fuel mode for long sessions with bots).
@@ -95,57 +100,64 @@ All the configuration is documented in
 ## The other screens
 
 - **Session**: prepare a session. Pick the type (Practice, Qualifying, Race,
-  Endurance, Elimination; in Advanced mode also "Beat the bot" and "AI
+  Endurance, Elimination; with bots also "Beat the bot" and "AI
   training"), set its parameters (laps, duration…) and the drivers, then
   "Put on grid". The rules of each type are in
   [architecture.md](architecture.md#session-types-racemodespy).
 - **History**: the recorded sessions, with their results and lap charts.
-- **System**: the panels Connection, CU buttons (the CU's physical buttons),
-  Console (raw frames, Advanced mode), Garage (programs a car's speed, brake and
-  tank, outside a session), CU firmware, API and Log, plus "Quit RaceLab".
+- **System**: the panels Connection (with the bots' status: "Ready · CU as it
+  is" on a stock V339), CU buttons (the CU's physical buttons), Console (raw
+  frames, with bots), Garage (programs a car's speed, brake and tank, outside a
+  session), API, **Advanced options** (CU firmware update, folded: not needed
+  for bots) and Log, plus "Quit RaceLab".
 
 ## Bot safety — what the app guarantees
 
-The firmware keeps the last throttle it received until told otherwise. The app
-therefore follows the rules of [bot-protocol.md](bot-protocol.md):
+RaceLab reaches the cars with the stock firmware's `C` command (one frame for
+the 6 slots) on a V339 CU, or with the bot module's `B` command on a CU flashed
+with it; the choice is automatic (`bot_transport` in the configuration). It
+follows the rules of [bot-protocol.md](bot-protocol.md):
 
-| Situation | What is sent to the CU |
-|---|---|
-| connection (first) | probe `B0A`, then `B<s>A` on the 6 slots (a previous crash may have left a bot active) |
-| active bot | its throttle, at most 1 change per slot per rails cycle, resent every 500 ms |
-| lights on / false start, session stopped, car finished | throttle 0 |
-| AI agent silent > 600 ms or disconnected | throttle 0 (the bot keeps the slot) |
-| E-STOP | throttle 0 on every bot, before any other frame |
-| link lost then recovered | throttle 0 on every bot **before** any other command, faders back to 0 |
-| shutdown (Ctrl+C, SIGTERM) | throttle 0 then `B<s>A` on each bot |
-| never | `G` (bootloader), `E`/`F` (firmware blocks) outside a firmware update; `C` under no circumstances |
+| Situation | `C` (stock CU) | `B` (bot module) |
+|---|---|---|
+| connection (first) | a frame that hands back every slot (`00`) | probe `B0A`, then `B<s>A` on the 6 slots (a previous crash may have left a bot active) |
+| active bot | the 6-slot frame on every change, resent every 300 ms | its throttle, at most 1 change per slot per rail cycle, resent every 500 ms |
+| lights on / false start, session stopped, car finished | throttle 0 | throttle 0 |
+| AI agent silent > 600 ms or disconnected | throttle 0 (the bot keeps the slot) | same |
+| E-STOP | throttle 0 (`P`) on every bot, before any other frame | `B<s>0` on every bot, before any other frame |
+| link lost then recovered | throttle 0 on every bot **before** any other command, faders back to 0 | same |
+| shutdown (Ctrl+C, SIGTERM, Quit) | a frame that hands back every slot | throttle 0 then `B<s>A` on each bot |
+| never | `G` (bootloader), `E`/`F` (firmware blocks) outside a firmware update | same |
 
-**A limit that no app can cover**: if the process is killed abruptly (`kill
--9`, the Mac shuts down) or if Bluetooth drops *and does not come back*, the CU
-keeps sending the last throttle. A firmware-side guard (throttle 0 if no `B`
-command for about 1 s) would settle this for good. Until then: keep a hand near
-the track's power supply during the first tests.
+**If the app goes silent** (process killed, Mac shut down, Bluetooth lost for
+good), the CU takes over by itself: with `C`, about 750 ms after the last frame
+every car is back on its controller (a car with no controller plugged in
+stops); with the bot module (`v339-bot.5`), about 1 s after the last command the
+bot cars are held at throttle 0. Still: keep a hand near the track's power
+supply during the first tests.
 
 ## Before the first real test: the bench
 
-Software drivers need a CU whose firmware understands the `B` command
-([bot-protocol.md](bot-protocol.md)). **This firmware is not provided by this
-repository** (it derives from Carrera's firmware, which is not free software).
-After every flash, check with the **car lifted**, wheels in the air:
+Before racing against bots on a real track — and after every firmware flash —
+check with the **car lifted**, wheels in the air:
 
-1. Slot 1 in Bot → Manual, fader at 3: the wheels turn slowly; at 6, faster;
-   at 0, they stop.
+1. Car 1 switched on, **Manual**, fader at 3: the wheels turn slowly; at 6,
+   faster; at 0, they stop.
 2. Throttle 1 = the minimum, not a cut-off; the slot's physical controller is
    ignored while the bot is active, and takes over again afterwards.
 3. Lane button over a switch: a single change per press.
 4. STOP (or Esc): the car really stops.
 
+5. Quit RaceLab (or cut the Bluetooth): within a second the car is back on its
+   controller (`C`) or stopped (`B`).
+
 If the real throttle does not follow the setpoint, or the switch is inverted,
-it is the firmware that needs another look, not the app.
+please open an issue with the CU version shown in System → Connection.
 
 ## Updating the CU firmware
 
-Panel **System → CU firmware**: the app lists the repository's `.HMF` images
+**Not needed for bots** on a V339 CU. Panel **System → Advanced options** (folded
+by default; it opens by itself during an update or a recovery): the app lists the repository's `.HMF` images
 and the ones you imported (import button), then flashes the CU through the AppConnect or the serial
 cable, using the procedure of `carreralib.fw` (`GB`, then one `.HMF` line per
 `E` command, split into 18-byte `F` blocks over BLE). The frames are described
@@ -156,7 +168,8 @@ in [protocol.md](protocol.md).
   queue emptied; during the flash nothing else is sent to the CU and the app
   refuses any other command (orange banner on every screen).
 - After the last line, the app waits for the restart, reads the version again
-  and probes the bot module: "bot module detected" = the flash worked.
+  and probes the bot module: "bots module" after a bot image, "stock firmware"
+  after the stock one = the flash worked.
 - If interrupted (button, link lost, app closed): the CU stays in its factory
   bootloader, which is never rewritten. **Recovery mode** = send the image
   again from the first line without going through `GB` again.
@@ -173,7 +186,7 @@ in [protocol.md](protocol.md).
   lines in quotes, consistent lengths), not its content. To go back to the
   original firmware, flash `v339-stock` (built with the others, `firmware/build/v339-stock.hmf`).
 - The flash can be tested without risk with `racelab --sim --stock-firmware`:
-  the virtual CU simulates the bootloader and restarts on the bot image.
+  the virtual CU simulates the bootloader and restarts on the flashed image.
 
 ## RL agent
 

@@ -233,7 +233,8 @@ def test_flash_stock_to_bot_firmware(tmp_path):
     async def main():
         app, client = await started(make_config(tmp_path))
         try:
-            assert app.link_info["bots_supported"] is False
+            assert app.link_info["bot_module"] is False          # stock firmware: no B module
+            assert app.link_info["bots_supported"] is True        # ...but bots through the C table
             images = (await op(client, "firmware.images"))["result"]
             bot = next(i for i in images if i["status"] == "recommended")
             refused = await op(client, "firmware.flash", image=bot["id"])
@@ -245,8 +246,8 @@ def test_flash_stock_to_bot_firmware(tmp_path):
             blocked = await op(client, "race.setup", settings={"type": "practice"})
             assert blocked["ok"] is False and "firmware" in blocked["error"]
             await wait_until(lambda: app.fw["state"] == "done")
-            assert app.fw["result"] == {"version": "5339", "bots_supported": True}
-            assert app.link_info["bots_supported"] is True and app.sim.flashed["lines"] == 897
+            assert app.fw["result"] == {"version": "5339", "bots_supported": True, "bot_module": True}
+            assert app.link_info["bot_module"] is True and app.sim.flashed["lines"] == 897
             assert any(e["stage"] == "write" for e in events)
             # the CU answers normally again, bots included
             assert (await op(client, "bot.take", slot=0, driver="manual"))["ok"]

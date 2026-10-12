@@ -1,7 +1,7 @@
 // Shell: router, top bar, keyboard shortcuts.
 import { h, setText, toggle } from "./dom.js";
 import { t, translateStatic } from "./i18n.js";
-import { connect, onEvent, onState, refreshMeta, store } from "./store.js";
+import { botsUnavailable, connect, onEvent, onState, refreshMeta, store } from "./store.js";
 import { run, toast } from "./ui/components.js";
 import { RaceView } from "./views/race.js";
 import { SetupView } from "./views/setup.js";
@@ -75,9 +75,9 @@ function updateTopbar(state) {
   pill.title = link.error ? t("topbar.last_error", { error: link.error }) : t("topbar.link_title");
   pill.href = link.transport === "none" ? "#/race" : "#/system";
 
-  // single mode selector: advanced only if the CU has the bots firmware
+  // single mode selector: "with bots" only if the CU can take software drivers
   const busy = !["idle", "grid", "finished"].includes(state.session?.state);
-  const why = state.advanced_unavailable;
+  const why = botsUnavailable(state);
   modeSwitch.querySelectorAll("button").forEach((b) => {
     toggle(b, "on", b.dataset.mode === state.mode);
     const advanced = b.dataset.mode === "advanced";

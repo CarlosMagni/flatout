@@ -44,6 +44,7 @@ def _args(fmt: str, frame: bytes) -> tuple | None:
 
 
 BOT_WATCHDOG_S = 13 * 0.075  # firmware watchdog: 13 rail cycles of 75 ms (firmware/bot/bot_mode.c)
+CTL_EXPIRE_S = 10 * 0.075  # stock C table: cleared 60 controller words (10 cycles) after the last frame
 
 class Simulator:
     """The virtual CU and the track; the state (firmware, cars) survives reconnections."""
@@ -67,6 +68,9 @@ class Simulator:
         self.lane_pending = 0  # bit addr = lane change armed
         self.bot_fed_at = [0.0] * 8  # simulated time of each slot's last throttle command (watchdog)
         self.bot_watchdog_s: float | None = BOT_WATCHDOG_S  # None: no watchdog (low-level tests)
+        # stock C table (firmware V339: word_cycle_step reads it instead of the controller)
+        self.ctl_table = [0] * 6  # low nibble throttle, bit 4 lane button, 0 = no host value
+        self.ctl_expire_at = 0.0
         # CU
         self.t = 0.0  # simulated time (s); the CU clock is its truncation to ms
         self.phase = 0
@@ -167,6 +171,12 @@ class Simulator:
             for car in self.cars:
                 car.armed = car.armed or bool(self.lane_pending >> car.slot & 1)
             self.lane_pending = 0
+        if any(self.ctl_table):
+            if self.t >= self.ctl_expire_at:  # the stock firmware drops the whole table
+                self.ctl_table = [0] * 6
+            for slot, value in enumerate(self.ctl_table):
+                if value & 0x10:  # C lane button held: the car remembers the request
+                    self.cars[slot].armed = True
         self._advance_phase(h)
 
         raw = [self._raw_throttle(car, h) for car in self.cars]
@@ -180,6 +190,9 @@ class Simulator:
 
     def _raw_throttle(self, car: Car, h: float) -> int:
         """Throttle requested before the CU hold: bot, otherwise controller (simulated human or nothing)."""
+        ctl = self.ctl_table[car.slot] if car.slot < 6 else 0
+        if ctl and not self.bot_mask >> car.slot & 1:
+            return ctl & 0x0F  # the C value replaces the controller (B, if any, rewrites the word later)
         if self.bot_mask >> car.slot & 1:
             # firmware watchdog (v339-bot.5): no throttle command for ~13 rail cycles -> 0
             if self.bot_watchdog_s is not None and self.t - self.bot_fed_at[car.slot] > self.bot_watchdog_s:
@@ -188,8 +201,18 @@ class Simulator:
         human = self._humans.get(car.slot)
         return human.throttle(h, self.phase) if human else 0
 
-    def _controller(self, slot: int) -> str:
+    def host_throttle(self, slot: int) -> int | None:
+        """Throttle a host (C table or B module) applies to the slot, None when the controller drives."""
         if self.bot_mask >> slot & 1:
+            if self.bot_watchdog_s is not None and self.t - self.bot_fed_at[slot] > self.bot_watchdog_s:
+                return 0
+            return self.bot_gas[slot]
+        if slot < 6 and self.ctl_table[slot]:
+            return self.ctl_table[slot] & 0x0F
+        return None
+
+    def _controller(self, slot: int) -> str:
+        if self.bot_mask >> slot & 1 or (slot < 6 and self.ctl_table[slot]):
             return "bot"
         return "human" if slot in self._humans else "none"
 
@@ -240,11 +263,13 @@ class Simulator:
             self._enter_bootloader()
             return b"G"
         if letter == b"0":
-            return protocol.pack("c4sC", b"0", VERSION)
+            return protocol.pack("c4sC", b"0", ("5" + self.cfg.firmware).encode())
         if letter == b"?":
             return self._poll()
         if letter == b"B":
             return self._cmd_bot(frame)
+        if letter == b"C" and self.cfg.firmware == "339":
+            return self._cmd_ctl(frame)
         ok = {b"J": self._cmd_program, b"T": self._cmd_button,
               b"=": self._cmd_reset, b":": self._cmd_ignore}.get(letter)
         if ok is None:
@@ -294,6 +319,21 @@ class Simulator:
             self.bot_mask |= bit
         return b"B"
 
+    def _cmd_ctl(self, frame: bytes) -> bytes:
+        """`C` + 6 × (throttle char, lane char): the stock firmware's host controller table.
+
+        Value = (throttle char - '0') | 0x10 if the lane char is '1'; 0 = no host value
+        (the controller drives). Only bits 0-4 are used by the firmware (`P` = held at 0)."""
+        if len(frame) < 13:
+            return b""
+        table = []
+        for i in range(6):
+            t, lane = frame[1 + 2 * i], frame[2 + 2 * i]
+            table.append(((t - 0x30) & 0xFF) | (0x10 if lane == ord("1") else 0))
+        self.ctl_table = table
+        self.ctl_expire_at = self.t + CTL_EXPIRE_S
+        return b"C"
+
     def _cmd_program(self, frame: bytes) -> bool:
         """`J`: programming word (car settings, position tower, lap counter)."""
         args = _args("cBYYC", frame)
@@ -340,6 +380,7 @@ class Simulator:
         self._fw_lines, self._fw_block, self._reboot_at = [], bytearray(), None
         self.bot_mask, self.lane_pending = 0, 0
         self.bot_gas = [0] * 8
+        self.ctl_table = [0] * 6
         self._events.clear()
         self._repeat = None
 

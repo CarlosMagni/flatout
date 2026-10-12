@@ -39,19 +39,31 @@ RaceLab s'en souvient. Pour changer : Système → Connexion.
 Séance → choisir le type → « Mettre en grille » → Course → « Départ »
 (ou la barre Espace). STOP (ou Échap) coupe tous les bots.
 
-## 5. Quitter
+## 5. Jouer contre l'ordinateur (bots)
+
+Écran Course → **Activer les bots** (ou **Avec bots** en haut). Allume les
+voitures que l'ordinateur doit piloter : en **Auto**, un bot attend le départ
+puis roule tout seul. Les autres voitures restent à leurs manettes. **Revenir
+au normal** rend toutes les voitures aux manettes.
+
+Rien à installer sur la CU : les bots marchent avec la CU telle quelle
+(firmware V339, la version actuelle).
+
+## 6. Quitter
 
 Système → **« Quitter RaceLab »** : les bots sont coupés et rendus aux manettes.
 Fermer la fenêtre ne suffit pas : RaceLab continue de tourner en arrière-plan.
 
 ## Avant de faire rouler des bots sur la vraie piste
 
-Les pilotes logiciels demandent une CU avec un firmware modifié (commande `B`,
-voir [bot-protocol.md](../bot-protocol.md), en anglais) ; ce firmware n'est
-**pas** fourni ici. Après tout flash, faire un essai au banc voiture soulevée
-(gaz 3, 6, 0 ; manette ignorée pendant le bot ; un seul changement de voie par
-appui ; STOP qui coupe) avant de laisser rouler un bot. Sans ce firmware,
-RaceLab fonctionne en mode classique.
+La première fois, faire un essai au banc voiture soulevée : une voiture allumée
+en **Manuel**, curseur à 3, 6, 0 ; manette ignorée pendant le bot ; un seul
+changement de voie par appui ; STOP qui coupe. Détails dans le
+[guide utilisateur](../user-guide.md#before-the-first-real-test-the-bench) (en anglais).
+
+Si l'app dit que les bots sont indisponibles, la CU est plus ancienne que la
+V339 : elle se met à jour dans Système → Options avancées (voir le
+[guide utilisateur](../user-guide.md#updating-the-cu-firmware), en anglais).
 
 ## En cas de souci
 

@@ -3,7 +3,7 @@ import {
   GATE_LABEL, STATE_CHIP, STATE_LABEL, clock, gap, h, inkOn, lapTime, s, setText, toggle, wallTime,
 } from "../dom.js";
 import { t } from "../i18n.js";
-import { onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
+import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
 import { FuelGauge, Fader, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
 import { ConnectChooser } from "./connect.js";
 
@@ -80,13 +80,20 @@ export class RaceView {
     this.feedBox = h("section.panel", {}, h("div.panel-head", {}, h("h2", { text: t("race.feed") })), this.feed);
     this.side = h("aside.side", {}, this.best, this.mapBox, this.feedBox);
 
-    // software drivers
+    // software drivers ("bots"); in normal mode, an invitation to turn them on
     this.botCards = [];
     this.botsGrid = h("div.bots-grid");
-    this.botsNote = h("span.dim");
-    this.bots = h("section.bots.hidden", {},
-      h("div.bots-head", {}, h("h2", { text: t("race.bots") }), this.botsNote),
-      this.botsGrid);
+    this.botsNote = h("span.dim", { title: t("bots.note_title") });
+    this.botsOff = h("button.btn.sm", {
+      title: t("bots.off_title"), onclick: () => setMode("classic"),
+    }, t("bots.off"));
+    this.botsHead = h("div.bots-head", {}, h("h2", { text: t("race.bots") }), this.botsNote, h("span.spacer"), this.botsOff);
+    this.inviteText = h("p");
+    this.inviteBtn = h("button.btn.primary", { onclick: () => setMode("advanced") }, t("bots.invite.go"));
+    this.invite = h("div.panel.bots-invite", {},
+      h("div.bots-invite-text", {}, h("h3", { text: t("bots.invite.title") }), this.inviteText),
+      this.inviteBtn);
+    this.bots = h("section.bots.hidden", {}, this.invite, this.botsHead, this.botsGrid);
 
     this.root.append(
       h("div.race", {}, this.bar, h("div.race-grid", {}, this.timing, this.bots, this.side)));
@@ -410,9 +417,21 @@ export class RaceView {
   // ------------------------------------------------------------ bots
 
   updateBots(state) {
-    const advanced = state.mode === "advanced" && state.link.transport !== "none";
-    toggle(this.bots, "hidden", !advanced);
-    if (!advanced) return;
+    const link = state.link;
+    const advanced = state.mode === "advanced" && link.transport !== "none";
+    const idle = ["idle", "grid", "finished"].includes(state.session?.state);
+    // invitation: a CU is connected, bots are off, and no session is running
+    const invite = !advanced && idle && link.state === "connected" && link.bots_supported != null;
+    toggle(this.bots, "hidden", !advanced && !invite);
+    toggle(this.invite, "hidden", advanced);
+    toggle(this.botsHead, "hidden", !advanced);
+    toggle(this.botsGrid, "hidden", !advanced);
+    if (!advanced) {
+      if (invite) this.updateInvite(state);
+      return;
+    }
+    this.botsOff.disabled = !idle;
+    this.botsOff.title = idle ? t("bots.off_title") : t("mode.busy");
     if (!this.botCards.length) {
       for (const bot of state.bots) {
         const card = new BotCard(bot.slot);
@@ -420,31 +439,39 @@ export class RaceView {
         this.botsGrid.append(card.el);
       }
     }
-    const link = state.link;
     let note = "";
-    const stock = link.bots_supported === false;
-    if (stock) note = t("bots.stock_note");
+    const usable = link.bots_supported !== false;
+    if (!usable) note = t("bots.unavailable", { why: botsUnavailable(state) || "" });
     else if (link.state !== "connected") note = t("bots.waiting_cu");
     else if (state.estop) note = t("bots.estop_note");
     else note = t("bots.note");
-    if (note !== this.botsNoteText) {
-      this.botsNoteText = note;
-      this.botsNote.replaceChildren(note, stock ? h("a", { href: "#/system", text: t("bots.update_fw") }) : "");
-    }
-    const usable = link.bots_supported !== false;
+    setText(this.botsNote, note);
     for (const card of this.botCards) {
       const bot = state.bots[card.slot];
       const car = state.cars.find((c) => c.slot === card.slot) || store.meta?.drivers?.[card.slot];
       card.update(bot, car, state, usable);
     }
   }
+
+  updateInvite(state) {
+    const old = state.link.bots_supported === false;
+    setText(this.inviteText, old ? t("bots.invite.old", { version: state.link.version ?? "?" }) : t("bots.invite.text"));
+    toggle(this.invite, "muted", old);
+    toggle(this.inviteBtn, "hidden", old);
+  }
+}
+
+function setMode(mode) {
+  run("mode.set", { mode }, mode === "advanced" ? t("mode.set_advanced") : t("mode.set_classic")).catch(() => {});
 }
 
 // ------------------------------------------------------------ bot card
 
+// "Auto" first and chosen by default: switching a car on lets the computer drive it
+// (it waits for the race to start)
 const DRIVER_OPTS = [
-  { value: "manual", label: t("bot.driver.manual"), title: t("bot.driver.manual_title") },
   { value: "profile", label: t("bot.driver.profile"), title: t("bot.driver.profile_title") },
+  { value: "manual", label: t("bot.driver.manual"), title: t("bot.driver.manual_title") },
   { value: "api", label: t("bot.driver.api"), title: t("bot.driver.api_title") },
 ];
 
@@ -453,12 +480,12 @@ class BotCard {
     this.slot = slot;
     this.inflight = false;
     this.queued = null;
-    this.choice = "manual";
+    this.choice = "profile";
     this.carno = h("span.carno");
     this.name = h("span.name");
     this.toggle = Toggle(false, (on) => (on ? this.setDriver(this.choice) : this.setDriver(null)), t("bot.toggle_aria"));
     this.toggle.el.title = t("bot.toggle_title");
-    this.seg = Segmented(DRIVER_OPTS, "manual", (v) => this.setDriver(v));
+    this.seg = Segmented(DRIVER_OPTS, this.choice, (v) => this.setDriver(v));
     this.fader = Fader({ onChange: (v) => this.sendThrottle(v), limit: store.meta?.safety?.confirm_throttle_above ?? 12 });
     this.gasValue = document.createTextNode("–");
     this.gasLabel = h("small");

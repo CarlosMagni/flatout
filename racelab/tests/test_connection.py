@@ -77,14 +77,16 @@ def test_hot_switch_releases_bots_and_ignores_old_link(tmp_path):
             first_sim = app.sim
             await op(client, "bot.take", slot=1, driver="manual")
             await op(client, "bot.throttle", slot=1, value=6)
-            await wait_until(lambda: first_sim.bot_gas[1] == 6)
+            await wait_until(lambda: first_sim.host_throttle(1) == 6)
             # switch to a CU on stock firmware
             assert (await op(client, "cu.connect", transport="sim", stock=True))["ok"]
-            assert first_sim.bot_mask == 0  # bot handed back to the controller on the old CU
+            assert first_sim.host_throttle(1) is None  # bot handed back to the controller on the old CU
             assert app.sim is not first_sim and app.bots.slots[1].driver is None
             await wait_until(lambda: app.link_info["state"] == "connected")
             await asyncio.sleep(0.3)  # the last messages from the old link are ignored
-            assert app.link_info["bots_supported"] is False and app.link_info["state"] == "connected"
+            # a stock V339 still takes software drivers, through its C table
+            assert app.link_info["bots_supported"] is True and app.link_info["bot_transport"] == "C"
+            assert app.link_info["state"] == "connected"
             # session in progress: change refused
             await op(client, "race.setup", settings={"type": "practice"})
             await op(client, "race.start")
@@ -155,15 +157,17 @@ def test_advanced_mode_follows_bot_firmware(tmp_path):
             await op(client, "cu.connect", transport="sim")
             await wait_until(lambda: app.mode == "advanced")  # advanced preference + bot module
             await op(client, "bot.take", slot=2, driver="manual")
-            # CU on stock firmware: automatic return to classic, bots handed back
+            # an older CU that cannot take software drivers: automatic return to classic, bots handed back
+            app.cfg.sim.firmware = "337"
             await op(client, "cu.connect", transport="sim", stock=True)
             await wait_until(lambda: app.link_info["state"] == "connected")
             assert app.mode == "classic" and app.bots.slots[2].driver is None
             r = await op(client, "mode.set", mode="advanced")
-            assert r["ok"] is False and "bot firmware" in r["error"]
+            assert r["ok"] is False and "software drivers" in r["error"]
             state = await (await client.get("/api/state")).json()
             assert state["advanced_unavailable"] and state["mode_preferred"] == "advanced"
-            # a CU with the module again: advanced mode comes back by itself
+            # a CU that can again: bot mode comes back by itself
+            app.cfg.sim.firmware = "339"
             await op(client, "cu.connect", transport="sim")
             await wait_until(lambda: app.mode == "advanced")
         finally:

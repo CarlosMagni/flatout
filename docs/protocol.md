@@ -70,7 +70,8 @@ Examples, as sent on a serial line (with framing):
 | show car 2 in position 1 on the position tower | `"J6411<$` |
 | set the maximum speed of car 2 to 9 (repeat 2) | `"J0492?$` |
 | reset the CU timer | `"=101$` |
-| bot, slot 1, throttle 10 (custom firmware) | `"B1:$` |
+| bots: slot 1 at throttle 8, the other slots on their controllers | `"C0080000000008$` |
+| bot, slot 1, throttle 10 (bot firmware module) | `"B1:$` |
 
 ## 3. Responses (CU → host)
 
@@ -134,9 +135,10 @@ Example: `?20010;9?41;` is address 1, timestamp 105295 ms, sector 1.
 | `T` | `T` `Y`(button) `C` | simulate a CU button: 1 = Pace/ESC, 2 = Start/Enter, 5 = Speed, 6 = Brake, 7 = Fuel, 8 = Code |
 | `:` | `:` `B`(mask) `C` | ignore controllers: bit *n* set = address *n* is excluded from timing |
 | `=` | `=` `Y`(1) `Y`(0) `C` | reset the CU timer (`=101`) |
-| `B` | `B` `c`(address) `c`(value) | software drivers, custom firmware only: see [bot-protocol.md](bot-protocol.md) |
+| `C` | `C` 6 × (`c`(throttle) `c`(lane)) `C` | software drivers on the stock CU: host throttle for the 6 slots at once, see [bot-protocol.md](bot-protocol.md) |
+| `B` | `B` `c`(address) `c`(value) | software drivers, bot firmware module only: see [bot-protocol.md](bot-protocol.md) |
 | `G`, `E`, `F` | | firmware update: see section 7. **Never send them otherwise.** |
-| `I`, `C` | | exist on the CU (CU information, CU settings); not used by RaceLab or carreralib, not documented here. RaceLab refuses to send `C`. |
+| `I` | | exists on the CU (CU information); not used by RaceLab or carreralib, not documented here. |
 
 ### Programming words (`J`)
 
@@ -161,7 +163,7 @@ times the word is repeated on the track).
 | 6 | autonomous car (ghost car) |
 | 7 | pace car |
 
-Software drivers (the `B` command) only exist on addresses 0-5. Timer events
+Software drivers (the `C` and `B` commands) only exist on addresses 0-5. Timer events
 report the address of the car that crossed, plus 1 on the wire.
 
 ## 6. Timings
@@ -174,9 +176,10 @@ report the address of the car that crossed, plus 1 on the wire.
 
 ## 7. Firmware update
 
-Described by carreralib's `fw.py` and RaceLab's *System → CU firmware* panel.
-Firmware images are `.HMF` files; the V339 images used by this project are in
-built from source into `firmware/build/` (tags and SHA-256 in `firmware/manifest.json`).
+Described by carreralib's `fw.py` and RaceLab's *System → Advanced options*
+panel. Software drivers do not need it (see the `C` command). Firmware images
+are `.HMF` files; the V339 images used by this project are built from source
+into `firmware/build/` (tags and SHA-256 in `firmware/manifest.json`).
 
 1. `GB` (+ checksum, `GB2`): the CU restarts in its bootloader. Wait about 2 s.
 2. For each line of the `.HMF` file (with its surrounding double quotes
@@ -193,11 +196,13 @@ be sent again from the first line (without `GB`).
 - **Never send `GB` outside a firmware update.** It restarts the CU in its
   bootloader, where it no longer behaves as a normal CU until a complete image
   has been sent. The same goes for `E` and `F`.
-- Do not send `C`.
+- `C` takes the cars away from their controllers: send it only for software
+  drivers, and keep resending it while they are active (it expires after about
+  750 ms, see [bot-protocol.md](bot-protocol.md)).
 - Programming words 0, 1 and 2 **reprogram cars**, which remember the values
   permanently. Use them only from a setup screen, one car at a time on the
   track, never during a race.
 - The programming channel is slow (section 6): coalesce updates instead of
   queueing them.
-- RaceLab enforces the first two rules itself: `G`, `E` and `F` are only sent
-  in firmware-update mode, `C` never.
+- RaceLab enforces these rules itself: `G`, `E` and `F` are only sent in
+  firmware-update mode, `C` and `B` only by its software drivers.
