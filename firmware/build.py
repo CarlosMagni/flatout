@@ -65,6 +65,14 @@ def in_docker(argv):
     """Re-run this script inside the pinned toolchain image."""
     if not shutil.which("docker"):
         fail("avr-gcc %s not found and Docker is not installed (see firmware/README.md)" % REFERENCE_GCC)
+    # with the daemon stopped, every docker command waits forever: ask it first, briefly
+    try:
+        up = subprocess.run(["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=20).returncode == 0
+    except subprocess.TimeoutExpired:
+        up = False
+    if not up:
+        fail("Docker is installed but not running: start Docker Desktop, then try again")
     have = subprocess.run(["docker", "image", "inspect", DOCKER_IMAGE], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL).returncode == 0
     if not have:
