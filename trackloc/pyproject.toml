@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools >= 80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trackloc"
+version = "0.1.0"
+description = "Camera localisation of slot cars: publishes the track shape and the car positions to RaceLab"
+readme = "README.md"
+requires-python = ">= 3.11"
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Games/Entertainment :: Simulation",
+]
+dependencies = [
+    "racelab",          # the sibling package in ../racelab (pip install -e racelab): client, motor model
+    "numpy",
+    "opencv-python-headless",
+]
+
+[project.optional-dependencies]
+dev = ["pytest >= 8"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
