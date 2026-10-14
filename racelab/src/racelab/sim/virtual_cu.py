@@ -268,7 +268,7 @@ class Simulator:
             return self._poll()
         if letter == b"B":
             return self._cmd_bot(frame)
-        if letter == b"C" and self.cfg.firmware == "339":
+        if letter == b"C" and self.cfg.firmware in ("338", "339"):  # C appeared in V338
             return self._cmd_ctl(frame)
         ok = {b"J": self._cmd_program, b"T": self._cmd_button,
               b"=": self._cmd_reset, b":": self._cmd_ignore}.get(letter)

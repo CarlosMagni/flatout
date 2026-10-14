@@ -38,14 +38,14 @@ The UI calls them **Normal** and **With bots**.
 
 | | Classic ("Normal") | Advanced ("With bots") |
 |---|---|---|
-| CU | any | one that takes software drivers: stock V339 (`C`) or the bot firmware module (`B`, probed at startup) |
+| CU | any | one that takes software drivers: stock V338/V339 (`C`) or the bot firmware module (`B`, probed at startup) |
 | Sessions | practice, qualifying, race, endurance, elimination | + rival, training |
 | Software drivers (`C` / `B`) | never sent (except the probe / reset) | yes, 6 slots |
 | Agent API (RL) | read-only | read + drive |
 | Raw console | no | yes (letters G/E/F/C/B are refused; the bots have their own commands) |
 
 The link picks the transport (`[connection] bot_transport`, default `auto`): `C` when
-the CU's version is `?339`, otherwise `B` if the module answers, otherwise none. It
+the CU's version is `?338` or `?339`, otherwise `B` if the module answers, otherwise none. It
 falls back the same way if the CU rejects `C`. Both feed the same per-slot model
 (`set_bot` / lane / release), so nothing above the link knows which one is used.
 
@@ -103,7 +103,7 @@ Replies (identical to what `SerialConnection.recv` returns, hence without `$`):
 | `0` | `b"05339"` + checksum (carreralib format `x4sC`) |
 | `?` | a pending timer event `b"?" + Y(adr+1) + I(ts) + Y(sector) + C`, otherwise the status `b"?:" + 8Y fuel + Y phase + Y mode + B pitmask + Y display + C` |
 | `J…` `T…` `=…` `:…` | echo of the letter (`b"J"`…) |
-| `C` + 12 chars + checksum | firmware 339 (`[sim] firmware`): echo `b"C"` + the host throttle table of [bot-protocol.md](bot-protocol.md) (expires after 750 ms); other versions: `b""` |
+| `C` + 12 chars + checksum | firmware 338/339 (`[sim] firmware`): echo `b"C"` + the host throttle table of [bot-protocol.md](bot-protocol.md) (expires after 750 ms); other versions: `b""` |
 | `B<adr><v>` | bot firmware: echo `b"B"` + the semantics of [bot-protocol.md](bot-protocol.md) (watchdog 1 s); stock firmware: `b""` (the CU answers `#`) |
 | anything else | `b""` |
 

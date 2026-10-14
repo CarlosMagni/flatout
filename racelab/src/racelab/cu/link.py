@@ -45,7 +45,9 @@ _UNKNOWN = object()  # throttle actually applied by the CU is unknown
 # C table (stock V339): the CU drops it ~750 ms after the last frame, so resend well before
 CTL_HEARTBEAT_S = 0.3
 CTL_LANE_PRESS_S = 0.12  # lane button held for at least one rail cycle (75 ms)
-CTL_FIRMWARE = "339"  # C semantics proven on V339 (firmware/reconstruction)
+# firmware versions with the C table: added in V338, identical in V339 (V336/V337 do not
+# dispatch C); checked against the official images, V339 rebuilt in firmware/reconstruction
+CTL_FIRMWARES = ("338", "339")
 # pause between two polls: a real CU link waits on I/O anyway, a virtual CU answers at once and
 # the loop would starve the app; bot commands, E-STOP and queued commands wake it immediately
 POLL_PAUSE_S = 0.004
@@ -457,8 +459,8 @@ class CULink:
                     logger.warning("lane change refused (slot %d)", slot)
 
     def _choose_transport(self, version: str | None, module: bool) -> str | None:
-        """C on a V339 CU (stock or ours: no custom firmware needed), else B if the module answers."""
-        ctl = bool(version) and version[1:4] == CTL_FIRMWARE
+        """C on a V338/V339 CU (stock or ours: no custom firmware needed), else B if the module answers."""
+        ctl = bool(version) and version[1:4] in CTL_FIRMWARES
         pref = self._cfg.bot_transport
         if pref == "C":
             return "C" if ctl else None

@@ -335,12 +335,17 @@ def test_c_table_estop_holds_every_bot(make_link):
     assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0] == [None, 0, None, 0, None, None])
 
 
-def test_auto_transport_without_v339(make_link):
-    """C is only used on the firmware it was verified on; other CUs fall back to the B module."""
+def test_auto_transport_without_c(make_link):
+    """C exists from V338 on; older CUs (V336/V337) fall back to the B module, or no bots."""
     link, _ = make_link(FakeCU(bots=True, version=b"5337"), bot_transport="auto")
     assert link.bot_transport == "B"
     link2, _ = make_link(FakeCU(bots=False, version=b"5337"), bot_transport="auto")
     assert link2.bot_transport is None and link2.bots_supported is False
+
+
+def test_auto_transport_uses_c_on_v338(make_link):
+    link, _ = make_link(FakeCU(bots=False, version=b"5338"), bot_transport="auto")
+    assert link.bot_transport == "C" and link.bots_supported is True
 
 
 def test_c_rejected_falls_back(make_link):

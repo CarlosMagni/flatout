@@ -13,7 +13,9 @@ Two modes, same interface, switched at the top of the screen:
 - **With bots**: the computer can drive any of the 6 cars (autopilot, manual
   fader, or an agent through the API), next to the hand controllers; also "Beat
   the bot" and "AI training" sessions and a diagnostic console. Available on a
-  CU with firmware V339 (the current one), or one flashed with the bot module.
+  CU with firmware V339 (the current one) or V338, or one flashed with the bot
+  module. An older CU can be updated to the stock V339 from System → Advanced
+  options.
 
 Screens: **Race**, **Session**, **History** and **System**.
 
@@ -106,7 +108,7 @@ All the configuration is documented in
   [architecture.md](architecture.md#session-types-racemodespy).
 - **History**: the recorded sessions, with their results and lap charts.
 - **System**: the panels Connection (with the bots' status: "Ready · CU as it
-  is" on a stock V339), CU buttons (the CU's physical buttons), Console (raw
+  is" on a stock V338/V339), CU buttons (the CU's physical buttons), Console (raw
   frames, with bots), Garage (programs a car's speed, brake and tank, outside a
   session), API, **Advanced options** (CU firmware update, folded: not needed
   for bots) and Log, plus "Quit RaceLab".
@@ -114,7 +116,7 @@ All the configuration is documented in
 ## Bot safety — what the app guarantees
 
 RaceLab reaches the cars with the stock firmware's `C` command (one frame for
-the 6 slots) on a V339 CU, or with the bot module's `B` command on a CU flashed
+the 6 slots) on a V338/V339 CU, or with the bot module's `B` command on a CU flashed
 with it; the choice is automatic (`bot_transport` in the configuration). It
 follows the rules of [bot-protocol.md](bot-protocol.md):
 
@@ -156,7 +158,7 @@ please open an issue with the CU version shown in System → Connection.
 
 ## Updating the CU firmware
 
-**Not needed for bots** on a V339 CU. Panel **System → Advanced options** (folded
+**Not needed for bots** on a V338/V339 CU. Panel **System → Advanced options** (folded
 by default; it opens by itself during an update or a recovery): the app lists the repository's `.HMF` images
 and the ones you imported (import button), then flashes the CU through the AppConnect or the serial
 cable, using the procedure of `carreralib.fw` (`GB`, then one `.HMF` line per

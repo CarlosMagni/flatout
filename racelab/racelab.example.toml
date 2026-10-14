@@ -18,7 +18,7 @@ timeout = 1.0            # max wait for a CU reply (s)
 connect_timeout = 20.0
 reconnect_delay = 1.5
 max_timeouts = 3         # missed replies in a row before declaring the link lost
-bot_transport = "auto"   # software drivers: auto (stock C table on a V339 CU, else the bot module's B) | C | B
+bot_transport = "auto"   # software drivers: auto (stock C table on a V338/V339 CU, else the bot module's B) | C | B
 
 [safety]
 heartbeat_ms = 500           # resend of the active bots' throttle

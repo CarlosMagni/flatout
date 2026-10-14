@@ -7,6 +7,7 @@
 | [api.md](api.md) | agent and script authors | WebSocket / REST API, track connectors, Python client |
 | [architecture.md](architecture.md) | contributors | modules and their contracts |
 | [protocol.md](protocol.md) | protocol / tool authors | CU serial and Bluetooth protocol |
+| [cu-firmware-versions.md](cu-firmware-versions.md) | firmware and app authors | what changed from V336 to V339, which versions take bots without flashing |
 | [bot-protocol.md](bot-protocol.md) | firmware and app authors | the `C` (stock CU) and `B` (bot module) commands for software drivers, and their safety rules |
 | [firmware/](../firmware/README.md) | firmware contributors | images and tags, building the bot image, the C reconstruction |
 

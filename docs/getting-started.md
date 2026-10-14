@@ -61,8 +61,8 @@ The first time, do a bench test with the car lifted: a car switched on in
 single lane change per press; STOP really cuts. Details in the
 [user guide](user-guide.md#before-the-first-real-test-the-bench).
 
-If the app says bots are unavailable, the CU is older than V339: it can be
-updated in System → Advanced options (see the
+If the app says bots are unavailable, the CU is older than V338: update it to the
+stock V339 in System → Advanced options (see the
 [user guide](user-guide.md#updating-the-cu-firmware)).
 
 ## If something goes wrong

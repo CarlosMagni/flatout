@@ -12,18 +12,18 @@ RaceLab picks one by itself (`bot_transport = "auto"` in the
 
 | | `C` — stock CU | `B` — bot firmware module |
 |---|---|---|
-| CU firmware | the stock V339 firmware, as sold | a `v339-bot.N` image ([firmware/](../firmware/README.md)) |
+| CU firmware | the stock firmware V338 or V339, as sold | a `v339-bot.N` image ([firmware/](../firmware/README.md)) |
 | firmware update | **none** | needed once |
 | one frame drives | all 6 slots | one slot |
 | app goes silent | after ~750 ms every slot is back on its controller | after ~1 s bot slots are held at throttle 0 (bot.5+) |
-| RaceLab uses it | first choice on a V339 CU | when `C` is not available and the module answers |
+| RaceLab uses it | first choice on a V338/V339 CU | when `C` is not available and the module answers |
 
 For the general frame format (framing, nibbles, checksum), see
 [protocol.md](protocol.md).
 
 ## `C` — the stock CU's host throttle table
 
-The stock V339 firmware keeps a small table, one entry per controller slot. On
+The stock firmware (V338 and V339) keeps a small table, one entry per controller slot. On
 each rail cycle it reads that entry **before** the controller: a slot with a host
 value transmits the host value; a slot without one transmits its controller.
 Everything downstream is the CU's own code, so the start-light hold, false-start
@@ -78,10 +78,13 @@ Examples (without framing):
 
 ### Detection
 
-RaceLab sends `C` only to a CU whose version answer (command `0`) ends in `339`.
+`C` appeared in firmware V338 and is identical in V339; V336 and V337 do not know
+it (checked in the official images: their command dispatcher has no `C`; see
+[cu-firmware-versions.md](cu-firmware-versions.md)). RaceLab
+sends `C` only to a CU whose version answer (command `0`) ends in `338` or `339`.
 If that CU rejects `C` (answers `#`), RaceLab tries the `B` module, and without it
-bots are unavailable on that CU. Older firmware versions are not used with `C`:
-their table has not been checked.
+bots are unavailable on that CU. An older CU can be updated to the stock V339
+from RaceLab (System → Advanced options).
 
 ## `B` — the bot firmware module
 

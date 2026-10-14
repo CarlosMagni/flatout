@@ -19,7 +19,7 @@ through an API.
   endurance, elimination; fuel and pit stops, position tower, session history
   with lap charts, a **big-screen view** readable from across the room.
 - **Software drivers ("bots")** — on any of the 6 controller slots, with the CU
-  as it is (stock firmware V339, see [Bots](#bots-on-a-stock-cu)): manual
+  as it is (stock firmware V338/V339, see [Bots](#bots-on-a-stock-cu)): manual
   fader, autopilots (constant throttle, target lap time with a learned throttle
   ceiling, throttle map, rival), or an external agent. One click turns them on
   (**With bots** at the top of the screen). Safety first: throttle forced to 0
@@ -55,7 +55,7 @@ against the simulator, driving a real slot car.
 
 ## Bots on a stock CU
 
-The stock CU firmware (V339, the current one) already has a command, `C`, that
+The stock CU firmware (V339, the current one, and V338) already has a command, `C`, that
 lets the host hold the throttle of any of the 6 controller slots — the CU then
 treats it exactly like a hand controller: start lights, false starts, fuel. So
 **bots need no firmware update**: connect the CU, click **With bots** at the
@@ -65,7 +65,8 @@ not switched on is driven by its controller.
 
 If the app goes silent (killed, Bluetooth lost), the CU itself gives every car
 back to its controller after about 750 ms. The command is specified in
-[`docs/bot-protocol.md`](docs/bot-protocol.md).
+[`docs/bot-protocol.md`](docs/bot-protocol.md). An older CU (V336, V337) does not
+have it: update it to the stock V339 first (System → Advanced options).
 
 ## Advanced: flash a CU firmware
 
@@ -115,7 +116,7 @@ python3 -m venv .venv
 ## Firmware
 
 Bots do not need a custom firmware (see [above](#bots-on-a-stock-cu)): the app
-uses the stock firmware's `C` command on a V339 CU, and the bot module's `B`
+uses the stock firmware's `C` command on a V338/V339 CU, and the bot module's `B`
 command on a CU flashed with it. Both are specified in
 [`docs/bot-protocol.md`](docs/bot-protocol.md). On a CU that has neither, RaceLab
 runs in **Normal** mode only (races with hand controllers).

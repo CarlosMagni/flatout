@@ -62,8 +62,8 @@ changement de voie par appui ; STOP qui coupe. Détails dans le
 [guide utilisateur](../user-guide.md#before-the-first-real-test-the-bench) (en anglais).
 
 Si l'app dit que les bots sont indisponibles, la CU est plus ancienne que la
-V339 : elle se met à jour dans Système → Options avancées (voir le
-[guide utilisateur](../user-guide.md#updating-the-cu-firmware), en anglais).
+V338 : mets-la à jour avec la V339 d'origine dans Système → Options avancées
+(voir le [guide utilisateur](../user-guide.md#updating-the-cu-firmware), en anglais).
 
 ## En cas de souci
 

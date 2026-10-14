@@ -1,6 +1,6 @@
 # firmware — Control Unit firmware V339 and the bot module, built from source
 
-**RaceLab bots do not need any of this**: on a stock V339 CU they use the firmware's own
+**RaceLab bots do not need any of this**: on a stock V338/V339 CU they use the firmware's own
 `C` command (see [`docs/bot-protocol.md`](../docs/bot-protocol.md)). This folder is for
 going further than the stock CU allows. It builds, **from source**:
 

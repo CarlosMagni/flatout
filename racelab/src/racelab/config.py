@@ -94,7 +94,7 @@ class ApiConfig:
 @dataclass
 class SimConfig:
     bot_firmware: bool = True  # False = simulate the stock firmware (no B command)
-    firmware: str = "339"  # firmware version the virtual CU reports (C table only proven on 339)
+    firmware: str = "339"  # firmware version the virtual CU reports (C table from 338 on)
     humans: list[int] = field(default_factory=lambda: [1, 2])  # slots held by simulated "humans"
     latency_ms: float = 12.0  # simulated BLE round trip
     jitter_ms: float = 6.0

@@ -5,7 +5,7 @@ with a REST mirror for simple scripts. By default the server listens on
 `127.0.0.1:8130` only; set `[api] token` in the TOML file to require a token.
 
 - Driving (`bot.*`) only exists in **advanced mode** (shown as "With bots" in the UI),
-  on a CU that takes software drivers: a stock V339 (`C` command) or one with the bot
+  on a CU that takes software drivers: a stock V338/V339 (`C` command) or one with the bot
   firmware module (`B`), see [bot-protocol.md](bot-protocol.md).
 - An agent can only drive the slots it has claimed (`bot.claim`).
 - **Dead-man switch**: an agent that sends no action for `[safety] deadman_ms`
