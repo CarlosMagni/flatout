@@ -413,14 +413,26 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     cfg = PipelineConfig(latency_s=args.latency, expected_slots=_slots(args.slots))
     if args.video or args.inputs:  # offline
+        import cv2
+
         if not (args.video and args.inputs):
             sys.exit("offline `run` needs --video FILE and --inputs FILE.jsonl")
-        src = FileSource(args.video)
+        stamps = Path(args.video).with_name("frames.jsonl")  # a recording's video: use its host-clock times
+        times = [json.loads(line)["t"] for line in stamps.read_text().splitlines() if line.strip()] if stamps.exists() else None
+        if times is None:
+            print("warning: no frames.jsonl next to the video, frames are timed from 0: the inputs' crossings will not "
+                  "line up with them (for a recording, use `replay`)")
+        src = FileSource(args.video, times=times)
         first = next(iter(src.frames()))[1]
         model, bg, _ = _prepare(args.map, first, not args.no_register)
         pipe = Pipeline(model, cfg, background=bg)
         sink = JsonlSink(args.sink or "positions.jsonl")
-        run_stream(pipe, merge(src.frames(), load_inputs(args.inputs)), sink, args.hz)
+        h, w = first.shape[:2]
+        overlay = Overlay(args.debug, cv2.VideoCapture(args.video).get(cv2.CAP_PROP_FPS) or 30.0, (w, h)) if args.debug else None
+        run_stream(pipe, merge(src.frames(), load_inputs(args.inputs)), sink, args.hz,
+                   after_frame=(lambda img, p: overlay.write(img, p)) if overlay else None)
+        if overlay:
+            overlay.close()
         sink.close()
         print(f"{len(pipe.log)} frames processed; positions in {args.sink or 'positions.jsonl'}")
         return 0

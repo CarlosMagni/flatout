@@ -14,6 +14,7 @@ same two messages.
 
 ```bash
 .venv/bin/pip install -e carreralib -e racelab -e trackloc   # from the repository root
+source .venv/bin/activate    # in every new terminal: `python -m trackloc` needs the venv
 ```
 
 macOS asks for the camera permission the first time a terminal runs a camera command: accept it

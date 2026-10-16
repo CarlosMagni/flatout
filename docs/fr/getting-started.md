@@ -83,6 +83,7 @@ position des voitures dans RaceLab.
 
 ```bash
 .venv/bin/pip install -e trackloc
+source .venv/bin/activate      # dans chaque nouveau terminal
 python -m trackloc marker      # repère à imprimer à 100 %, puis mesurer le carré noir
 python -m trackloc probe       # caméras disponibles (autoriser l'accès caméra au terminal)
 python -m trackloc map --camera 1 --slot 0 --marker-size 0.150   # tour de découverte automatique

@@ -164,3 +164,26 @@ def test_f_with_a_lossy_codec_the_replay_is_close_not_identical(small_setup, tmp
 
 def wrap_(d):
     return (d + 0.5) % 1.0 - 0.5
+
+
+def test_offline_run_of_a_recording_publishes_the_cars_like_replay(small_setup, tmp_path):
+    """`run --video <recording>/video.mkv --inputs <recording>` must time the frames on the recording's
+    host clock (frames.jsonl), or no crossing ever lines up with a frame and no car is ever named."""
+    from trackloc.__main__ import main
+
+    model, sess = small_setup
+    if model.background is None:
+        pytest.skip("synthetic map without a background image")
+    model.save(tmp_path / "map.json")
+    bench.write_recording(sess, tmp_path / "rec", codec="ffv1")
+    args = ["--map", str(tmp_path / "map.json"), "--slots", "0,1,2"]
+    assert main(["run", "--video", str(tmp_path / "rec" / "video.mkv"), "--inputs", str(tmp_path / "rec"),
+                 "--sink", str(tmp_path / "run.jsonl"), *args]) == 0
+    assert main(["replay", str(tmp_path / "rec"), "--sink", str(tmp_path / "replay.jsonl"), *args]) == 0
+
+    def named(path):
+        rows = [json.loads(x) for x in path.read_text().splitlines()][1:]  # first line: the track
+        return sum(1 for r in rows if len(r["cars"]) == 3)
+
+    assert named(tmp_path / "run.jsonl") > 100
+    assert named(tmp_path / "run.jsonl") == named(tmp_path / "replay.jsonl")
