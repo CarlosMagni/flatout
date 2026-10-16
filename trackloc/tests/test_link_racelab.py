@@ -210,3 +210,25 @@ def _swallow(fn):
         fn()
     except BaseException:  # noqa: BLE001 - the driver reports its own abort
         pass
+
+
+# ----------------------------------------------------------------------------- what the roll call needs from the link
+
+def test_status_and_a_free_claim_outside_a_session(racelab_factory):
+    """`status()` is what the roll call checks before it moves a car; `claim(free=True)` is how it drives outside a session."""
+    server = racelab_factory("sim", time_scale=6.0)
+    link = RaceLabLink(server.url, "camera").connect()
+    try:
+        assert wait_for(lambda: link.status()["link"] == "connected")
+        st = link.status()
+        assert st["session"] in ("idle", "finished") and st["estop"] is False  # the roll call's go
+        link.claim(0, free=True)
+        link.act(0, throttle=3)
+        assert wait_for(lambda: server.call(lambda: server.app.bots.slots[0].api_value) == 3)  # driven with no session running
+        link.act(0, throttle=0)
+        link.unclaim(0)
+        assert wait_for(lambda: server.call(lambda: server.app.bots.slots[0].driver) is None)
+        server.call(lambda: server.app.bots.estop())
+        assert wait_for(lambda: link.status()["estop"] is True)  # an E-STOP shows up in the status: the roll call refuses
+    finally:
+        link.close()

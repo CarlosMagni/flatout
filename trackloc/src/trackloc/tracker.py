@@ -21,6 +21,9 @@ State of a car: `x` = position along the centre line (m, from the finish line, w
   time: the camera latency is larger than the BLE delay, so they wait for the frame
   that covers them.
 - A car is published only once an anchor (or a single expected car) labelled it.
+- Roll call (`identify`): `hint(slot, x, lane)` says "car `slot` is parked here": the confirmed unlabelled
+  track there gets the label at once, without waiting for a crossing. `set_signature(slot, sig)` stores
+  the car's colours; they are used ONLY to break a tie when a crossing is ambiguous (`_by_signature`).
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from functools import lru_cache
 from typing import Any
 
 from racelab.sim.physics import SPEED_MIN_SCALE, TAU_ACC, TAU_BRAKE, VMAX
+
+from .appearance import Signature, blend, distance
 
 # a track that is not seen for this long (s), outside the blind zones, is "off"
 LOST_OFF_S = 1.0
@@ -70,6 +75,7 @@ class Detection:
     occluder: bool = False  # too big to be a car (hand): x is its centre, `extent` half-length (m)
     extent: float = 0.0
     sigma: float | None = None  # position noise (m), default: TrackerConfig.sigma_meas
+    sig: Signature | None = None  # colours of the blob (only computed when the roll call stored signatures)
 
 
 @dataclass
@@ -103,6 +109,10 @@ class TrackerConfig:
     speed_bins: int = 60
     speed_prior_tau: float = 0.20
     use_speed_prior: bool = True
+    hint_gate_m: float = 0.25  # a roll-call hint names the track this close to the parked car
+    hint_ttl_s: float = 30.0  # a hint that finds no track for this long (tracker time) is dropped
+    sig_margin: float = 0.12  # appearance tie-break: the best candidate must beat the next one by this
+    sig_max: float = 0.55  # ... and be at most this far from the car's signature
 
 
 class SpeedPrior:
@@ -150,6 +160,7 @@ class Track:
         self.t_ok = t  # last time the absence of a detection was not suspicious
         self.x_meas = x  # position of the last detection
         self.off_votes = 0
+        self.sig: Signature | None = None  # running average of the colours of its detections
         self.x = x
         self.v = 0.0
         self.g = cfg.gain0
@@ -231,9 +242,11 @@ class Tracker:
         self._gain: dict[int, float] = {}
         self._prior: dict[int, SpeedPrior] = {}
         self._anchors: list[Anchor] = []
+        self.signatures: dict[int, Signature] = {}  # slot -> colours, from the roll call
+        self._hints: dict[int, list[Any]] = {}  # slot -> [x, lane, tracker time of the first update]
         self.crossings: list[dict[str, Any]] = []  # one entry per resolved CU crossing
         self.stats = {"relabels": 0, "anchored": 0, "ambiguous": 0, "unmatched": 0,
-                      "spawned": 0, "off_events": 0}
+                      "spawned": 0, "off_events": 0, "named": 0, "sig_resolved": 0}
 
     # ------------------------------------------------------------------ inputs
 
@@ -256,6 +269,16 @@ class Tracker:
             if ts <= t:
                 return thr
         return hist[0][1]
+
+    def set_signature(self, slot: int, sig: Signature) -> None:
+        """Colours of the car of `slot` (roll call): a tie-breaker for ambiguous crossings, nothing more."""
+        self.signatures[slot] = sig
+
+    def hint(self, slot: int, x: float, lane: int) -> None:
+        """The car of `slot` is parked at `x` (m on the centre line) in `lane` (roll call): the confirmed
+        unlabelled track there is named at once. The hint is dropped once the slot has a track, or after
+        `hint_ttl_s`."""
+        self._hints[slot] = [x % self.map.length, lane, None]
 
     def add_anchor(self, slot: int, sector: int, t_cross: float) -> None:
         if sector in self.map.anchors:
@@ -285,6 +308,7 @@ class Tracker:
             tr.history.append((t, tr.x, tr.v))
             while tr.history and t - tr.history[0][0] > cfg.history_s:
                 tr.history.popleft()
+        self._apply_hints(t)
         self._resolve_anchors(t)
         self._solo_label()
 
@@ -404,6 +428,8 @@ class Tracker:
             self._update(tr, d.x, (d.sigma or self.cfg.sigma_meas) ** 2 + (self.cfg.sigma_time * tr.v) ** 2)
         tr.lane, tr.t_meas, tr.t_ok, tr.off_votes, tr.hits = d.lane, t, t, 0, tr.hits + 1
         tr.x_meas = d.x
+        if d.sig is not None:
+            tr.sig = blend(tr.sig, d.sig)
         if tr.slot is not None:
             self._learn(tr)
 
@@ -476,6 +502,40 @@ class Tracker:
                 tr.g = self._gain.get(slot, self.map.gain_hint or self.cfg.gain0)
                 tr.P[2][2] = (0.08 if slot in self._gain else self.cfg.gain_sigma0) ** 2
 
+    def _apply_hints(self, t: float) -> None:
+        cfg, L = self.cfg, self.map.length
+        for slot, h in list(self._hints.items()):
+            h[2] = t if h[2] is None else h[2]
+            if self._holder(slot) is not None or t - h[2] > cfg.hint_ttl_s:
+                del self._hints[slot]
+        cands = [tr for tr in self._confirmed() if tr.slot is None]
+        if not self._hints or not cands:
+            return
+        slots = list(self._hints)
+        costs = []
+        for slot in slots:
+            x, lane, _ = self._hints[slot]
+            row = []
+            for tr in cands:
+                dx = wrap(tr.x - x, L)
+                row.append((dx / cfg.hint_gate_m) ** 2 + (0.0 if tr.lane == lane else 4.0) if abs(dx) <= cfg.hint_gate_m else math.inf)
+            costs.append(row)
+        for slot, j in zip(slots, assign(costs, 1e9)):
+            if j is not None:
+                self._set_label(cands[j], slot)
+                del self._hints[slot]
+                self.stats["named"] += 1
+
+    def _by_signature(self, slot: int, tracks: list[Track]) -> Track | None:
+        """Tie-break: the track whose colours are clearly the closest to the car of `slot`, else None
+        (every candidate needs colours of its own: without them nothing is compared)."""
+        sig = self.signatures.get(slot)
+        if sig is None or len(tracks) < 2 or any(tr.sig is None for tr in tracks):
+            return None
+        ranked = sorted((distance(tr.sig, sig), tr.id, tr) for tr in tracks)
+        (d0, _, best), (d1, _, _) = ranked[0], ranked[1]
+        return best if d0 <= self.cfg.sig_max and d1 - d0 >= self.cfg.sig_margin else None
+
     def _resolve_anchors(self, t: float) -> None:
         cfg, L = self.cfg, self.map.length
         self._anchors = [a for a in self._anchors if t - a.t <= cfg.anchor_max_wait_s]
@@ -502,6 +562,7 @@ class Tracker:
                 w.append((dist[i][j] / win) ** 2 if abs(dist[i][j]) <= win else math.inf)
             costs.append(w)
         picks = assign(costs, 1.0 + 1e-9)
+        taken: set[int] = set()  # tracks chosen by the colour tie-break in this batch
         matched_slots = {a.slot for a, p in zip(batch, picks) if p is not None}
         for i, (a, p) in enumerate(zip(batch, picks)):
             if p is None:
@@ -512,6 +573,14 @@ class Tracker:
             others = sorted(abs(dist[i][j]) for j in range(len(cands)) if j != p)
             ambiguous = bool(others) and others[0] < max(2 * abs(d), abs(d) + 0.12) \
                 and others[0] <= cfg.anchor_window_m + cfg.anchor_speed_s * tr.v
+            if ambiguous and tr.slot != a.slot:  # a tie: the colours may tell (ponytail: one anchor at a time)
+                near = [j for j, c in enumerate(cands) if abs(dist[i][j]) <= cfg.anchor_window_m + cfg.anchor_speed_s * c.v
+                        and c.id not in taken]
+                alt = self._by_signature(a.slot, [cands[j] for j in near])
+                if alt is not None:
+                    tr, d, ambiguous = alt, dist[i][cands.index(alt)], False
+                    self.stats["sig_resolved"] += 1
+            taken.add(tr.id)
             entry = {"slot": a.slot, "sector": a.sector, "t": a.t, "matched": True, "resid_m": d,
                      "v": tr.v, "track": tr.id, "labelled": tr.slot == a.slot}
             if tr.slot != a.slot:

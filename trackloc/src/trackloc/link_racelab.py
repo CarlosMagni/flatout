@@ -7,7 +7,8 @@ It turns RaceLab into the three seams of the pipeline:
   event: same machine, same clock) and `throttle` {t, slot, applied} (on every change of the
   throttle the CU applies to a bot);
 - sink: `set_track(geometry)` and `publish(t, cars)` map to `track.set` / `track.positions`;
-- control (for `map`): claim / act / unclaim / estop and the session, for `drive.DiscoveryDriver`.
+- control (for `map` and the `identify` roll call): claim / act / unclaim / estop, the session and `status()`,
+  for `drive.DiscoveryDriver` and `identify.RollCall`.
 
 Built on `racelab.client.SyncClient` (a background thread owns the connection), so every method
 can be called from any thread. Dependency direction: trackloc imports RaceLab, never the reverse.
@@ -115,9 +116,18 @@ class RaceLabLink:
         assert self.client is not None
         self.client.stop()
 
-    def claim(self, slot: int) -> None:
+    def claim(self, slot: int, free: bool = False) -> None:
+        """`free=True`: allowed to drive outside a session (the roll call, which refuses while one runs)."""
         assert self.client is not None
-        self.client.claim(slot)
+        self.client.claim(slot, free)
+
+    def status(self) -> dict[str, Any]:
+        """What a roll call checks before it moves a car, from the last state RaceLab sent:
+        `session` (idle, grid, running, ...), `estop` (bool), `link` (CU link state), `mode`."""
+        assert self.client is not None
+        st = self.client.state
+        return {"session": st.get("session", {}).get("state", "idle"), "estop": bool(st.get("estop")),
+                "link": st.get("link", {}).get("state"), "mode": st.get("mode")}
 
     def act(self, slot: int, throttle: int | None = None, lane: bool = False) -> None:
         assert self.client is not None

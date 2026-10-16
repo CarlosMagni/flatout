@@ -2,8 +2,10 @@
 
     probe     list the cameras (resolution, measured fps)
     marker    write the ArUco marker to print (DICT_4X4_50, id 0)
+    preview   aim the camera: annotated live view in a browser on 127.0.0.1 (or --snapshot FILE), moves nothing
     record    record camera + RaceLab events to a folder (the most important one on the first day)
     map       discovery lap: drive a car slowly, record, build the map (or rebuild it from a recording)
+    identify  roll call: pulse each slot's car at a low throttle to see which car is which slot (`run --identify`)
     run       live: camera + map -> car positions published to RaceLab
     replay    run the same pipeline offline on a recording (identical to the live session)
     synth     write synthetic recordings (ground truth) to try map/replay before touching the track
@@ -15,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -44,6 +47,12 @@ def _add_camera(p: argparse.ArgumentParser) -> None:
                    help="seconds subtracted from the arrival time of a frame (default: half a frame period)")
 
 
+def _add_roll_call(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--throttle", type=int, default=4, help="roll-call pulse throttle 1..15 (default 4)")
+    p.add_argument("--cap", type=int, default=8, help="a roll-call retry never raises the throttle above this")
+    p.add_argument("--pulse-s", type=float, default=0.5, help="length of the roll-call pulse in seconds (0.1..2)")
+
+
 def _add_link(p: argparse.ArgumentParser) -> None:
     p.add_argument("--racelab-url", default=None, help=f"RaceLab WebSocket, e.g. {DEFAULT_URL}")
     p.add_argument("--token", default=None, help="RaceLab API token, if set")
@@ -64,6 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--out", default="trackloc_marker.pdf")
     p.add_argument("--size-mm", type=float, default=150.0, help="side of the black square (A4 holds up to ~190)")
     p.add_argument("--landscape", action="store_true")
+
+    p = sub.add_parser("preview", help="aim the camera: annotated live view in a browser (read-only, 127.0.0.1)")
+    _add_camera(p)
+    p.add_argument("--map", default=None, help="map file: draws its lane lines and checks the track fills the frame")
+    p.add_argument("--port", type=int, default=8140, help="port on 127.0.0.1 (the page is never served on another address)")
+    p.add_argument("--snapshot", metavar="FILE", help="write one annotated JPEG per second to FILE instead of serving")
+    p.add_argument("--duration", type=float, default=None, help="stop after this many seconds (default: until Ctrl-C)")
+    p.add_argument("--lang", choices=("en", "fr"), default=None, help="language of the terminal text and the picture "
+                   "(default: from $LANG; the page has an EN/FR switch)")
 
     p = sub.add_parser("record", help="record video + timestamps + RaceLab events")
     _add_camera(p)
@@ -94,10 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--codec", default="mjpg", choices=("mjpg", "ffv1"))
     p.add_argument("--yes", action="store_true", help="do not wait for Enter (empty background)")
 
+    p = sub.add_parser("identify", help="roll call: which car is which slot (moves each car a little)")
+    _add_camera(p)
+    _add_link(p)
+    p.add_argument("--map", required=True, help="map file from `map`")
+    p.add_argument("--slots", required=True, help="slots of the cars on the track, e.g. 0,1,2")
+    _add_roll_call(p)
+
     p = sub.add_parser("run", help="live localisation, published to RaceLab")
     _add_camera(p)
     _add_link(p)
     p.add_argument("--map", required=True, help="map file from `map`")
+    p.add_argument("--identify", action="store_true",
+                   help="roll call before tracking: pulse each car of --slots to name it (needs RaceLab, no session running)")
+    _add_roll_call(p)
     p.add_argument("--latency", type=float, default=0.0, help="camera latency in seconds (from `replay`)")
     p.add_argument("--slots", default="", help="cars on the track, e.g. 0,1 (one car: no crossing needed to name it)")
     p.add_argument("--record", default=None, help="also record the session to this folder")
@@ -407,6 +435,120 @@ def cmd_map(args: argparse.Namespace) -> int:
     return code
 
 
+def cmd_preview(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .geometry import MapModel
+    from .preview import Preview, checklist_text, feed_video, run_snapshots, say, serve
+
+    lang = args.lang or ("fr" if os.environ.get("LANG", "").lower().startswith("fr") else "en")
+    model = None
+    if args.map:
+        try:
+            model = MapModel.load(args.map)
+        except (OSError, ValueError, KeyError) as e:
+            sys.exit(f"cannot read the map {args.map}: {e}")
+    pv = Preview(model, lang)
+    stop = threading.Event()
+    src = None
+    if args.video:  # a video file in place of a camera (a demo, or a test of the page)
+        threading.Thread(target=feed_video, args=(pv, args.video, stop), daemon=True, name="trackloc-video").start()
+    else:
+        src = _make_source(args)
+        src.start(lambda t, t_raw, image: pv.feed(image, t_raw))
+    threading.Thread(target=pv.run, args=(stop,), daemon=True, name="trackloc-preview").start()
+    timer = None
+    if args.duration:
+        timer = threading.Timer(args.duration, stop.set)
+        timer.daemon = True  # Ctrl-C must not wait for it
+        timer.start()
+    print(checklist_text(lang), flush=True)
+    try:
+        if args.snapshot:
+            print("\n" + say(lang, "snap_writing", path=args.snapshot), flush=True)
+            run_snapshots(pv, args.snapshot, stop)
+        else:
+            def ready(host: str, port: int) -> None:
+                print("\n" + say(lang, "open_url", host=host, port=port), flush=True)
+
+            try:
+                asyncio.run(serve(pv, args.port, stop, ready))
+            except OSError as e:
+                sys.exit(f"cannot listen on 127.0.0.1:{args.port}: {e} (another preview running? try --port)")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        if timer is not None:
+            timer.cancel()
+        if src is not None:
+            src.stop()
+    return 0
+
+
+def _wait_frame(feed: Any, seconds: float = 10.0) -> Any:
+    for _ in range(int(seconds / 0.05)):
+        got = feed.latest()
+        if got is not None:
+            return got[1]
+        time.sleep(0.05)
+    sys.exit(f"no frame from the camera in {seconds:g} s")
+
+
+def _roll_setup(args: argparse.Namespace) -> tuple[tuple[int, ...], Any]:
+    """The slots and the settings of the roll call, validated BEFORE anything is opened or connected."""
+    from .identify import RollConfig
+
+    slots = _slots(args.slots)
+    if not slots:
+        sys.exit("the roll call needs --slots: the slots of the cars on the track, e.g. 0,1,2")
+    try:
+        return slots, RollConfig(throttle=args.throttle, cap=args.cap, pulse_s=args.pulse_s)
+    except ValueError as e:
+        sys.exit(str(e))
+
+
+def _roll_call(args: argparse.Namespace, link: Any, pipe: Any, feed: Any) -> list[Any]:
+    """The roll call of `identify` and `run --identify`; raises RollCallAborted (the cars were handed back)."""
+    from .identify import RollCall, format_results
+
+    slots, cfg = _roll_setup(args)
+    print(f"roll call of slots {[s + 1 for s in slots]}: one pulse each at throttle {cfg.throttle}/15 for {cfg.pulse_s:g} s "
+          "(refused while a session runs or E-STOP is on; Ctrl-C hands the car back)...", flush=True)
+    results = RollCall(link, pipe, feed, slots, cfg).run()
+    print(format_results(results))
+    return results
+
+
+def cmd_identify(args: argparse.Namespace) -> int:
+    from .identify import FrameTap, RollCallAborted
+    from .pipeline import Pipeline, PipelineConfig
+
+    if args.video:
+        sys.exit("`identify` moves cars: it needs a live camera")
+    _roll_setup(args)
+    tap = FrameTap()
+    src = _make_source(args)
+    src.start(tap.on_frame)
+    link = None
+    try:
+        model, bg, _ = _prepare(args.map, _wait_frame(tap), True)
+        pipe = Pipeline(model, PipelineConfig(), background=bg)
+        link = _connect(args)
+        _roll_call(args, link, pipe, tap)
+    except RollCallAborted as e:
+        print(f"\nABORTED: {e}")
+        return 3
+    except KeyboardInterrupt:
+        print("\ninterrupted: the car was handed back (throttle 0, unclaimed).")
+        return 130
+    finally:
+        src.stop()
+        if link:
+            link.close()
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from .debug import Overlay
     from .live import Live
@@ -415,6 +557,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     from .sources import FileSource
 
     cfg = PipelineConfig(latency_s=args.latency, expected_slots=_slots(args.slots))
+    if args.identify and (args.video or args.inputs or args.sink or not args.racelab_url):
+        sys.exit("--identify moves the cars through RaceLab: it needs the live camera and --racelab-url (not --video, --inputs or --sink)")
+    if args.identify:
+        _roll_setup(args)  # --slots, --throttle, --cap, --pulse-s checked before the camera or RaceLab is touched
     if args.video or args.inputs:  # offline
         import cv2
 
@@ -447,6 +593,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         rec = Recorder(args.record, fps=info["fps"], size=(info["width"], info["height"]), codec=args.codec,
                        meta={"command": "run", "args": vars(args), "info": info})
     live = Live(recorder=rec, defer=True)
+    tap = None
+    if args.identify:
+        from .identify import FrameTap
+
+        tap = FrameTap()
+        live.frame_tap = tap.on_frame  # the roll call looks at frames before the session is processed
     src.start(live.on_frame)
     live.start()
     for _ in range(200):  # the first frame registers the map to the current view
@@ -480,6 +632,40 @@ def cmd_run(args: argparse.Namespace) -> int:
     sink.set_track(model.geometry())
     if link:
         link.start_inputs(live.on_input)
+
+    def shutdown() -> None:
+        src.stop()
+        live.stop()
+        if rec:
+            rec.close()
+        if link:
+            try:
+                link.clear_track()
+            finally:
+                link.close()
+        elif hasattr(sink, "close"):
+            sink.close()
+
+    if tap is not None:
+        from .identify import RollCallAborted, apply_results
+
+        try:
+            results = _roll_call(args, link, pipe, tap)
+        except RollCallAborted as e:
+            shutdown()
+            print(f"\nABORTED: {e}")
+            return 3
+        except KeyboardInterrupt:
+            shutdown()
+            print("\ninterrupted: the car was handed back (throttle 0, unclaimed).")
+            return 130
+        except BaseException:  # a bug: still close the camera and the link (the car is already released)
+            shutdown()
+            raise
+        live.frame_tap = None
+        with pipe.lock:
+            named = apply_results(pipe.tracker, results)
+        print(f"named by the roll call: slots {[s + 1 for s in named]}; the others wait for a finish-line crossing")
     live.active = True
     print(f"track '{model.name}' published ({model.length_c:.2f} m, {len(model.lanes)} lane(s)); cars appear once a "
           "finish-line crossing names them" + ("" if not cfg.expected_slots else f" (or at once: expected slots {cfg.expected_slots})"))
@@ -494,17 +680,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        src.stop()
-        live.stop()
-        if rec:
-            rec.close()
-        if link:
-            try:
-                link.clear_track()
-            finally:
-                link.close()
-        elif hasattr(sink, "close"):
-            sink.close()
+        shutdown()
     if live.error is not None:
         print(f"stopped: {live.error}")
         return 1
@@ -566,8 +742,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(message)s")
     try:
-        return {"probe": cmd_probe, "marker": cmd_marker, "record": cmd_record, "map": cmd_map, "run": cmd_run,
-                "replay": cmd_replay, "synth": cmd_synth, "bench": cmd_bench}[args.cmd](args)
+        return {"probe": cmd_probe, "marker": cmd_marker, "preview": cmd_preview, "record": cmd_record, "map": cmd_map,
+                "identify": cmd_identify, "run": cmd_run, "replay": cmd_replay, "synth": cmd_synth,
+                "bench": cmd_bench}[args.cmd](args)
     except OSError as e:
         print(e)
         return 1

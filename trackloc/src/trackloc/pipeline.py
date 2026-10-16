@@ -27,6 +27,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from .appearance import signature
 from .detect import OFF, Detector, DetectorConfig
 from .geometry import MapModel
 from .timing import ClockSync
@@ -98,6 +99,10 @@ class Pipeline:
 
     # ------------------------------------------------------------------ frames
 
+    @staticmethod
+    def blob_box(b: Any) -> tuple[float, float, float, float]:
+        return b.cx - b.w / 2, b.cy - b.h / 2, b.cx + b.w / 2, b.cy + b.h / 2
+
     def detections(self, t: float, image: np.ndarray) -> list[Detection]:
         m = self.model
         L = m.length_c
@@ -119,7 +124,9 @@ class Pipeline:
                 # visible part: trust it less in proportion to what is missing
                 seen = b.area * mpp * mpp / m.car_area_m2 if m.car_area_m2 else 1.0
                 sigma = self.cfg.tracker.sigma_meas * (1.0 + 8.0 * max(0.0, 0.85 - seen))
-                out.append(Detection(t, b.zone, float(c * L), float(b.area), sigma=float(min(sigma, 0.15))))
+                sig = signature(image, self.detector.last_mask, self.blob_box(b), self.detector.scale) \
+                    if self.tracker.signatures else None  # colours only matter once a roll call stored some
+                out.append(Detection(t, b.zone, float(c * L), float(b.area), sigma=float(min(sigma, 0.15)), sig=sig))
         return out
 
     def on_frame(self, t: float, image: np.ndarray) -> list[dict[str, Any]]:

@@ -95,8 +95,11 @@ class Live:
         self.crossings: dict[int, int] = {}
         self.error: BaseException | None = None
         self.last_frame_t = 0.0
+        self.frame_tap: Any = None  # optional `f(t, t_raw, image)`, called in the capture thread (must return fast)
 
     def on_frame(self, t: float, t_raw: float, image: np.ndarray) -> None:
+        if self.frame_tap is not None:  # the roll call looks at frames before the session is processed
+            self.frame_tap(t, t_raw, image)
         self.stream.put_frame(t, t_raw, image)
 
     def on_input(self, msg: dict[str, Any]) -> None:

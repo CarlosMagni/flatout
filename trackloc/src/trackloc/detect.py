@@ -83,6 +83,7 @@ class Detector:
         self.open_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.cfg.open_px,) * 2)
         self.close_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.cfg.close_px,) * 2)
         self.last_thr = 0.0
+        self.last_mask: np.ndarray | None = None  # foreground of the last frame (processing resolution)
         if model is not None:
             self.set_model(model)
 
@@ -145,6 +146,7 @@ class Detector:
             if self._n % 8 == 0:
                 self.bg_u8 = cv2.convertScaleAbs(self.bg)
                 self.bg_med = self._median(self.bg_u8)
+        self.last_mask = mask
         return mask
 
     def _plain(self, mask: np.ndarray) -> list[Blob]:

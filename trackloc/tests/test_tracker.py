@@ -335,3 +335,69 @@ def test_latency_estimate_from_crossing_residuals():
     assert est["regression"] == pytest.approx(0.12, abs=1e-6)
     assert 0.05 < est["median"] < 0.12  # slope-only is biased by C
     assert estimate_latency([])["median"] is None
+
+
+# ----------------------------------------------------------------------------- roll call: hints and colour tie-break
+
+def _sig(peak):
+    """A fake colour signature: almost all the mass in one bin."""
+    from trackloc.appearance import SIG_BINS
+
+    v = [0.01 / (SIG_BINS - 1)] * SIG_BINS
+    v[peak] = 0.99
+    return tuple(v)
+
+
+def _parked(tr, cars, frames=10, t0=0.0):
+    """Feed `frames` frames of parked cars: cars = [(x, lane, signature or None)]."""
+    for k in range(frames):
+        tr.update(t0 + k * DT, [Detection(t0 + k * DT, ln, x, area=100, sig=sig) for x, ln, sig in cars])
+    return t0 + (frames - 1) * DT
+
+
+def test_a_roll_call_hint_names_the_parked_car_at_once():
+    tr = make_tracker()
+    tr.hint(3, 2.0, lane=1)  # the roll call found slot 4 here, side by side with another car in lane 0
+    tr.hint(1, 2.02, lane=0)
+    _parked(tr, [(2.0, 1, None), (2.02, 0, None), (4.5, 0, None)])
+    named = {t.slot: t for t in tr.tracks if t.slot is not None}
+    assert set(named) == {1, 3} and named[3].lane == 1 and named[1].lane == 0  # told apart by lane, no crossing needed
+    assert [t.slot for t in tr.tracks if abs(t.x - 4.5) < 0.1] == [None]  # the third car stays unnamed
+    assert tr.stats["named"] == 2 and tr._hints == {}
+
+
+def test_a_hint_that_finds_no_track_expires_and_a_crossing_label_wins():
+    tr = make_tracker()
+    tr.hint(0, 1.0, lane=0)
+    tr.hint(1, 3.0, lane=0)
+    _parked(tr, [(1.0, 0, None), (5.0, 0, None)])  # nothing parked at x=3: the hint of slot 1 finds no track
+    assert [t.slot for t in tr.tracks if abs(t.x - 1.0) < 0.1] == [0] and 1 in tr._hints
+    tr.update(tr.t + 40.0, [Detection(tr.t + 40.0, 0, 5.0, area=100)])
+    assert tr._hints == {}  # expired: it can no longer name a car that has since been moved by hand
+
+
+def test_colours_break_the_tie_of_an_ambiguous_crossing_and_only_then():
+    def setup(with_colours):
+        tr = make_tracker()
+        # two cars either side of the finish line (x = 0): A is 1 cm from it, B 3 cm: geometry alone says A
+        t = _parked(tr, [(0.01, 0, _sig(3)), (LENGTH - 0.03, 1, _sig(20))])
+        if with_colours:
+            tr.set_signature(1, _sig(20))  # slot 2 (index 1) is the car of B's colours
+        tr.add_anchor(1, 1, t - 0.1)
+        tr.update(t + DT, [Detection(t + DT, 0, 0.01, area=100, sig=_sig(3)), Detection(t + DT, 1, LENGTH - 0.03, area=100, sig=_sig(20))])
+        return tr
+
+    tr = setup(True)
+    a, b = (next(t for t in tr.tracks if t.lane == ln) for ln in (0, 1))
+    assert b.slot == 1 and a.slot is None and tr.stats["sig_resolved"] == 1 and tr.stats["ambiguous"] == 0
+    tr = setup(False)  # no colours stored: the old behaviour, the crossing stays ambiguous and names nobody
+    assert all(t.slot is None for t in tr.tracks) and tr.stats["ambiguous"] == 1 and tr.stats["sig_resolved"] == 0
+
+
+def test_colours_that_do_not_clearly_differ_decide_nothing():
+    tr = make_tracker()
+    t = _parked(tr, [(0.01, 0, _sig(3)), (LENGTH - 0.03, 1, _sig(3))])  # two cars of the same colours
+    tr.set_signature(1, _sig(3))
+    tr.add_anchor(1, 1, t - 0.1)
+    tr.update(t + DT, [Detection(t + DT, 0, 0.01, area=100, sig=_sig(3)), Detection(t + DT, 1, LENGTH - 0.03, area=100, sig=_sig(3))])
+    assert all(x.slot is None for x in tr.tracks) and tr.stats["sig_resolved"] == 0

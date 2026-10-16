@@ -21,6 +21,7 @@ dependencies = [
     "racelab",          # the sibling package in ../racelab (pip install -e racelab): client, motor model
     "numpy",
     "opencv-python-headless",
+    "aiohttp >= 3.9",   # `preview`: the aiming page (127.0.0.1, GET only); RaceLab needs it anyway
 ]
 
 [project.optional-dependencies]
