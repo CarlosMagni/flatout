@@ -1,15 +1,18 @@
 // Components shared by the views.
 import { h, s, setText, toggle } from "../dom.js";
-import { t } from "../i18n.js";
-import { request } from "../store.js";
+import { lang, t } from "../i18n.js";
+import { request, store } from "../store.js";
 
 // ------------------------------------------------------------ toasts
 
+// errors and the STOP notice stay at least 8 s (long enough to read, and for a screen reader to finish)
+const ALERT_KINDS = new Set(["error", "stop"]);
 export function toast(text, kind = "info", ms = 3200) {
   const box = document.getElementById("toasts");
-  const el = h(`div.toast.${kind}`, { text, role: kind === "error" ? "alert" : null });
+  const alert = ALERT_KINDS.has(kind);
+  const el = h(`div.toast.${kind}`, { text, role: alert ? "alert" : null });
   box.append(el);
-  setTimeout(() => el.remove(), ms);
+  setTimeout(() => el.remove(), alert ? Math.max(ms, 8000) : ms);
 }
 
 // runs a command and shows the error, if any
@@ -94,6 +97,9 @@ export function Fader({ onChange, limit = 12 }) {
   const limitEl = h("div.limit");
   const el = h("div.fader", { tabindex: 0, role: "slider", "aria-orientation": "vertical", "aria-valuemin": 0, "aria-valuemax": 15 },
     ticks, limitEl, fill, knob);
+  // big "0" next to the slider (shown on touch screens): one tap = throttle 0
+  const zero = h("button.fader-zero", { type: "button", text: "0", onclick: () => set(0, true) });
+  zero.disabled = true;
   let value = 0;
   let unlocked = false;
   let mode = "edit"; // edit | readonly | disabled
@@ -129,15 +135,29 @@ export function Fader({ onChange, limit = 12 }) {
     if (user) onChange?.(v);
   }
 
+  // A finger never makes the value jump to the touch point (a thumb brushing the fader while
+  // scrolling would send throttle): after TOUCH_SLOP px of vertical travel it drags by the DELTA.
+  const TOUCH_SLOP = 6;
+  let touch = null; // { y, v, moving } while a finger is down
+  const end = () => { dragging = false; touch = null; };
   el.addEventListener("pointerdown", (ev) => {
     if (mode !== "edit") return;
     dragging = true;
     el.setPointerCapture(ev.pointerId);
-    set(fromPointer(ev), true);
+    if (ev.pointerType === "touch") touch = { y: ev.clientY, v: value, moving: false };
+    else set(fromPointer(ev), true);
   });
-  el.addEventListener("pointermove", (ev) => { if (dragging) set(fromPointer(ev), true); });
-  el.addEventListener("pointerup", () => { dragging = false; });
-  el.addEventListener("pointercancel", () => { dragging = false; });
+  el.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    if (!touch) { set(fromPointer(ev), true); return; }
+    const dy = touch.y - ev.clientY;
+    if (!touch.moving && Math.abs(dy) < TOUCH_SLOP) return;
+    touch.moving = true;
+    const span = el.getBoundingClientRect().height - 2 * pad;
+    set(Math.round(touch.v + (dy / span) * 15), true);
+  });
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
   el.addEventListener("keydown", (ev) => {
     if (mode !== "edit") return;
     const step = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1, PageUp: 3, PageDown: -3 }[ev.key];
@@ -148,6 +168,7 @@ export function Fader({ onChange, limit = 12 }) {
 
   return {
     el,
+    zero,
     get value() { return value; },
     get dragging() { return dragging; },
     set(v) { if (!dragging) set(v, false); },
@@ -157,6 +178,7 @@ export function Fader({ onChange, limit = 12 }) {
       toggle(el, "disabled", m === "disabled");
       el.tabIndex = m === "edit" ? 0 : -1;
       el.setAttribute("aria-disabled", m === "edit" ? "false" : "true");
+      zero.disabled = m !== "edit";
       render(value);
     },
     setUnlocked(on) { unlocked = on; render(value); },
@@ -199,7 +221,8 @@ export function confirmModal({ title, text, confirmLabel = t("common.confirm"), 
       resolve(value);
     };
     const onKey = (ev) => {
-      if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); close(false); }
+      // no stopPropagation: Escape also reaches the emergency stop (app.js), which must work under a dialog
+      if (ev.key === "Escape") { ev.preventDefault(); close(false); }
       else if (ev.key === "Enter" && document.activeElement?.tagName !== "BUTTON") { ev.preventDefault(); close(true); }
       else if (ev.key === "Tab") {
         // focus stays inside the modal
@@ -224,9 +247,28 @@ export function confirmModal({ title, text, confirmLabel = t("common.confirm"), 
 
 // ------------------------------------------------------------ side drawer
 
+const FOCUSABLE = "button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
+
 export function openDrawer(title, content, actions = []) {
-  const close = () => { backdrop.remove(); drawer.remove(); document.removeEventListener("keydown", onKey, true); };
-  const onKey = (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); close(); } };
+  const previous = document.activeElement;
+  const close = () => {
+    backdrop.remove(); drawer.remove();
+    document.removeEventListener("keydown", onKey, true);
+    previous?.focus?.();
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") close(); // not stopped: Escape also engages the emergency stop
+    else if (ev.key === "Tab") {
+      // focus stays inside the drawer
+      const items = [...drawer.querySelectorAll(FOCUSABLE)].filter((el) => !el.disabled && el.offsetParent !== null);
+      if (!items.length) return;
+      const i = items.indexOf(document.activeElement);
+      if (i < 0 || (ev.shiftKey && i === 0) || (!ev.shiftKey && i === items.length - 1)) {
+        ev.preventDefault();
+        items[ev.shiftKey ? items.length - 1 : 0].focus();
+      }
+    }
+  };
   const backdrop = h("div.drawer-backdrop", { onclick: close });
   const drawer = h("aside.drawer", { role: "dialog", "aria-modal": "true", "aria-label": title },
     h("header", {}, h("h3", { text: title }), h("button.btn.ghost.sm", { onclick: close, "aria-label": t("common.close") }, t("common.close"))),
@@ -240,13 +282,14 @@ export function openDrawer(title, content, actions = []) {
     })) : null);
   document.addEventListener("keydown", onKey, true);
   document.body.append(backdrop, drawer);
+  (drawer.querySelector(".content").querySelector(FOCUSABLE) || drawer.querySelector("button"))?.focus();
   return close;
 }
 
 // ------------------------------------------------------------ fields
 
-export function Stepper({ value = 0, min = 0, max = 99, step = 1, onChange }) {
-  const input = h("input", { type: "text", inputmode: "numeric", value });
+export function Stepper({ value = 0, min = 0, max = 99, step = 1, onChange, label }) {
+  const input = h("input", { type: "text", inputmode: "numeric", value, "aria-label": label || null });
   const clamp = (v) => Math.max(min, Math.min(max, v));
   const commit = (v) => {
     v = clamp(Number.isFinite(v) ? v : min);
@@ -255,9 +298,9 @@ export function Stepper({ value = 0, min = 0, max = 99, step = 1, onChange }) {
   };
   input.addEventListener("change", () => commit(parseInt(input.value, 10)));
   const el = h("div.stepper", {},
-    h("button", { type: "button", "aria-label": t("stepper.minus"), onclick: () => commit((parseInt(input.value, 10) || 0) - step) }, "−"),
+    h("button", { type: "button", "aria-label": label ? `${t("stepper.minus")} ${label}` : t("stepper.minus"), onclick: () => commit((parseInt(input.value, 10) || 0) - step) }, "−"),
     input,
-    h("button", { type: "button", "aria-label": t("stepper.plus"), onclick: () => commit((parseInt(input.value, 10) || 0) + step) }, "+"));
+    h("button", { type: "button", "aria-label": label ? `${t("stepper.plus")} ${label}` : t("stepper.plus"), onclick: () => commit((parseInt(input.value, 10) || 0) + step) }, "+"));
   return { el, get value() { return parseInt(input.value, 10); }, set(v) { input.value = v; } };
 }
 
@@ -268,9 +311,9 @@ export function Toggle(checked, onChange, label) {
   return { el: h("label.toggle", {}, input, h("i")), input };
 }
 
-export function Segmented(options, value, onChange) {
+export function Segmented(options, value, onChange, label) {
   const buttons = options.map((o) => h("button", { type: "button", text: o.label, title: o.title || "", dataset: { value: o.value } }));
-  const el = h("div.seg", { role: "group" }, buttons);
+  const el = h("div.seg", { role: "group", "aria-label": label || null }, buttons);
   const set = (v) => buttons.forEach((b) => {
     const on = b.dataset.value === String(v);
     toggle(b, "on", on);
@@ -286,6 +329,17 @@ export function Segmented(options, value, onChange) {
 // One chip per connector: name, status and an "Open" link to the connector's own page
 // (new tab, never an iframe). Text comes from the connector: set as text only (escaped).
 // The server only accepts http(s) links; checked again here before making a link.
+// the connector page can follow the UI language: lang=en|fr is added to its query (kept as is otherwise)
+function withLang(href) {
+  try {
+    const url = new URL(href);
+    url.searchParams.set("lang", lang);
+    return url.href;
+  } catch {
+    return href;
+  }
+}
+
 export function fillConnectors(el, list) {
   const sig = JSON.stringify(list || []);
   if (el.dataset.sig === sig) return;
@@ -294,6 +348,36 @@ export function fillConnectors(el, list) {
     const safe = typeof c.ui_url === "string" && /^https?:\/\//i.test(c.ui_url);
     return h("span.chip.connector", { title: c.agent }, h("span.connector-name", { text: c.name }),
       c.status ? h("span.connector-status", { text: c.status }) : null,
-      safe ? h("a", { href: c.ui_url, target: "_blank", rel: "noopener", text: t("connector.open") }) : null);
+      safe ? h("a", { href: withLang(c.ui_url), target: "_blank", rel: "noopener", text: t("connector.open") }) : null);
   }));
+}
+
+// ------------------------------------------------------------ emergency stop (every STOP button)
+
+const RELEASE_GUARD_MS = 1500;
+let estopSince = null; // when the stop was last seen engaged (performance.now() ms)
+
+/** Called on every state: remembers when the stop became engaged (from a click, Escape or another client). */
+export function noteEstop(engaged) {
+  if (engaged && estopSince === null) estopSince = performance.now();
+  if (!engaged) estopSince = null;
+}
+
+/** What every STOP button does: engage at once; release only after a confirmation, and never within
+ *  1.5 s of engaging. A panic double tap must not re-arm the cars: Auto drivers start again on release. */
+export async function estopButton() {
+  const state = store.state;
+  if (!state || state.mode !== "advanced") return;
+  if (!state.estop) {
+    estopSince = performance.now();
+    run("estop").catch(() => {});
+    return;
+  }
+  if (estopSince !== null && performance.now() - estopSince < RELEASE_GUARD_MS) {
+    toast(t("estop.just_engaged"), "stop");
+    return;
+  }
+  const ok = await confirmModal({ title: t("estop.release_title"), text: t("estop.release_text"),
+                                  confirmLabel: t("estop.release_confirm"), danger: true });
+  if (ok && store.state?.estop) run("estop.clear").catch(() => {});
 }

@@ -4,7 +4,7 @@
 import { h, setText, toggle } from "../dom.js";
 import { lang, t } from "../i18n.js";
 import { onEvent, request, store } from "../store.js";
-import { Stepper, copyText, run, toast } from "../ui/components.js";
+import { Stepper, confirmModal, copyText, estopButton, run, toast } from "../ui/components.js";
 
 const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 const LONG = 12000; // request timeout of the ops that wait for the server
@@ -15,9 +15,38 @@ const LATENCY_MAX_MS = 400;
 const DURATIONS = [0.2, 0.5, 1, 1.5, 2];
 const BENCH_SIZES = [50, 100, 300];
 const STEP_IDS = ["link_check", "latency", "pulse", "lane", "handback"];
+const LANE_MIN_MS = 1500; // the lane step runs at least this long (the car must reach the lane changer)
+const STORE_KEY = "racelab.hwtest";
+const MOVE_IDS = ["pulse", "lane", "handback"]; // steps that really move a car
 
-// results survive leaving and coming back to the System screen (until the page is reloaded)
-const memory = { results: {}, notes: "", saved: null, settings: { slot: 0, throttle: 3, ms: 1000, n: 100 } };
+// Results survive leaving and coming back to the System screen, and a page reload (localStorage:
+// results and notes only; the storage may be unavailable, then they just last until the reload).
+function loadKept() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY));
+    const results = {};
+    for (const id of STEP_IDS) {
+      const r = d?.results?.[id];
+      if (r && typeof r === "object" && ["pass", "fail", "wait", "aborted", "refused"].includes(r.status)) results[id] = r;
+    }
+    return { results, notes: typeof d?.notes === "string" ? d.notes : "" };
+  } catch {
+    return { results: {}, notes: "" };
+  }
+}
+const kept = loadKept();
+const memory = { results: kept.results, notes: kept.notes, saved: null, settings: { slot: 0, throttle: 3, ms: 1000, n: 100 } };
+
+function keep() {
+  try {
+    if (!Object.keys(memory.results).length && !memory.notes.trim()) localStorage.removeItem(STORE_KEY);
+    else localStorage.setItem(STORE_KEY, JSON.stringify({ results: memory.results, notes: memory.notes }));
+  } catch { /* storage unavailable */ }
+}
+
+const laneMs = (ms) => Math.max(ms, LANE_MIN_MS);
+// steps that are not finished: waiting for an answer, not run, refused or interrupted
+const INCOMPLETE = new Set(["not_run", "todo", "wait", "refused", "aborted"]);
 
 const now = () => new Date().toISOString();
 const CHIPS = {
@@ -84,7 +113,7 @@ export class HwTestPanel {
   // ------------------------------------------------------------ build
 
   build() {
-    this.stopBtn = h("button.btn.danger.lg", { type: "button", onclick: () => this.stop() }, t("estop.stop"));
+    this.stopBtn = h("button.btn.danger.lg", { type: "button", "aria-pressed": "false", onclick: () => this.stop() }, t("estop.stop"));
     this.bar = h("div.hw-bar", {},
       h("div.hw-warn", { role: "alert" }, h("strong", { text: t("hw.warn.title") }), h("span", { text: t("hw.warn.text") })),
       this.stopBtn);
@@ -92,12 +121,12 @@ export class HwTestPanel {
     this.slotSel = h("select.input", { "aria-label": t("hw.slot") });
     for (let i = 0; i < 6; i++) this.slotSel.append(h("option", { value: i, text: t("hw.slot_option", { n: i + 1 }) }));
     this.slotSel.value = memory.settings.slot;
-    this.slotSel.addEventListener("change", () => { memory.settings.slot = Number(this.slotSel.value); });
-    this.throttle = Stepper({ value: memory.settings.throttle, min: 1, max: 6, onChange: (v) => { memory.settings.throttle = v; } });
+    this.slotSel.addEventListener("change", () => { memory.settings.slot = Number(this.slotSel.value); this.refreshRecap(); });
+    this.throttle = Stepper({ label: t("hw.throttle"), value: memory.settings.throttle, min: 1, max: 6, onChange: (v) => { memory.settings.throttle = v; this.refreshRecap(); } });
     this.duration = h("select.input", { "aria-label": t("hw.duration") });
     for (const s of DURATIONS) this.duration.append(h("option", { value: s * 1000, text: t("hw.seconds", { s }) }));
     this.duration.value = memory.settings.ms;
-    this.duration.addEventListener("change", () => { memory.settings.ms = Number(this.duration.value); });
+    this.duration.addEventListener("change", () => { memory.settings.ms = Number(this.duration.value); this.refreshRecap(); });
     this.setup = h("div.hw-setup", {},
       h("label", {}, h("span", { text: t("hw.slot") }), this.slotSel),
       h("label", {}, h("span", { text: t("hw.throttle") }), this.throttle.el),
@@ -115,9 +144,13 @@ export class HwTestPanel {
 
     this.notes = h("textarea.input.hw-notes", { rows: 3, placeholder: t("hw.notes_placeholder"), "aria-label": t("hw.notes") });
     this.notes.value = memory.notes;
-    this.notes.addEventListener("input", () => { memory.notes = this.notes.value; });
+    this.notes.addEventListener("input", () => { memory.notes = this.notes.value; keep(); this.renderKept(); });
     this.copyBtn = h("button.btn.primary", { type: "button", onclick: () => this.copyReport() }, t("hw.copy"));
     this.saved = h("p.note.hw-saved");
+    this.summary = h("p.hw-summary", { role: "status" });
+    this.caution = h("p.note.hw-caution.hidden");
+    this.clearBtn = h("button.btn.ghost.sm", { type: "button", onclick: () => this.clearKept() }, t("hw.clear"));
+    this.kept = h("p.note.hw-kept.hidden", {}, h("span", { text: t("hw.kept") }), this.clearBtn);
 
     this.el = h("section.panel.sys-panel.hw", {},
       h("div.panel-head", {}, h("h2", { text: t("hw.title") })),
@@ -127,8 +160,11 @@ export class HwTestPanel {
         this.setup, this.why, this.modeBtn,
         this.list,
         h("div.hw-report", {},
+          this.summary,
           h("h3", { text: t("hw.report.title") }),
           h("p.note", { text: t("hw.report.desc") }),
+          this.caution,
+          this.kept,
           this.notes,
           h("div.hw-actions", {}, this.copyBtn),
           this.saved)));
@@ -146,13 +182,18 @@ export class HwTestPanel {
     const chip = h("span.chip");
     const body = h("div.hw-body");
     const button = h("button.btn", { type: "button", onclick: onRun }, runLabel);
+    // steps 3-5 move a car: what will be sent is written just before the button
+    const recap = MOVE_IDS.includes(id) ? h("p.hw-recap") : null;
+    const reason = h("p.note.hw-reason.hidden");
     const el = h("li.hw-step", {},
       h("div.hw-step-head", {}, h("span.hw-n", { text: String(STEP_IDS.indexOf(id) + 1) }), h("h3", { text: title }), chip),
       h("p.note", { text: desc }),
+      recap,
       h("div.hw-run", {}, extra || null, button),
+      reason,
       body);
     this.list.append(el);
-    this.steps[id] = { el, chip, body, button };
+    this.steps[id] = { el, chip, body, button, recap, reason };
   }
 
   // ------------------------------------------------------------ state
@@ -169,42 +210,62 @@ export class HwTestPanel {
     let needMode = false;
     if (!connected) why = t("hw.why.link");
     else if (link.bots_supported !== true) why = t("hw.why.bots");
+    else if (!idle) why = t("hw.why.session"); // before the mode: the mode cannot change during a session
     else if (!advanced) { why = t("hw.why.mode"); needMode = true; }
-    else if (!idle) why = t("hw.why.session");
     else if (state.estop) why = t("hw.why.estop");
     const handbackWhy = why || (link.bot_transport !== "C" ? t("hw.why.transport") : bots ? t("hw.why.bots_active") : null);
-    const sig = [connected, why, handbackWhy, busy, state.estop, needMode, this.running].join("|");
+    const sig = [connected, why, handbackWhy, busy, state.estop, needMode, idle, store.online, this.running].join("|");
     if (sig === this.sig) return;
     this.sig = sig;
 
     setText(this.stopBtn, state.estop ? t("hw.release_stop") : t("estop.stop"));
+    this.stopBtn.setAttribute("aria-pressed", state.estop ? "true" : "false");
     toggle(this.why, "hidden", !(why || handbackWhy));
     setText(this.why, why || handbackWhy || "");
     toggle(this.modeBtn, "hidden", !needMode);
-    this.steps.link_check.button.disabled = !store.online || busy;
-    this.steps.latency.button.disabled = !connected || busy;
-    for (const id of ["pulse", "lane"]) this.steps[id].button.disabled = !!why || busy;
-    this.steps.handback.button.disabled = !!handbackWhy || busy;
+    this.modeBtn.disabled = !idle;
+    // every disabled run button says why, under itself and in its tooltip
+    const own = {
+      link_check: store.online ? null : t("topbar.server_down"),
+      latency: connected ? null : t("hw.why.link"),
+      pulse: why, lane: why, handback: handbackWhy,
+    };
+    for (const id of STEP_IDS) {
+      const step = this.steps[id];
+      const reason = this.running === id ? null : busy ? t("hw.why.busy") : own[id];
+      step.button.disabled = !!reason || this.running === id;
+      step.button.title = reason || "";
+      setText(step.reason, reason || "");
+      toggle(step.reason, "hidden", !reason);
+    }
     for (const id of STEP_IDS) toggle(this.steps[id].el, "running", this.running === id);
     this.renderAll();
   }
 
   stop() {
-    run(this.state?.estop ? "estop.clear" : "estop").catch(() => {});
+    estopButton(); // engage at once; release asks first, never right after engaging
   }
 
   // ------------------------------------------------------------ steps
 
   setResult(id, result) {
     memory.results[id] = { ...result, at: now() };
+    keep();
     this.sig = null;
     this.renderStep(id);
+    this.renderSummary();
+    this.renderKept();
     if (this.state) this.update(this.state);
   }
 
   async begin(id, op, args, timeout) {
     this.running = id;
     this.sig = null;
+    if (id === "pulse" || id === "lane") { // live cue: a timer line, as for the hand-back pause
+      this.moving = { at: performance.now(), ms: args.ms };
+      clearInterval(this.tick);
+      this.tick = setInterval(() => this.renderStep(id), 100);
+    }
     this.renderStep(id);
     if (this.state) this.update(this.state);
     try {
@@ -212,6 +273,7 @@ export class HwTestPanel {
     } finally {
       this.running = null;
       this.paused = null;
+      this.moving = null;
       clearInterval(this.tick);
     }
   }
@@ -231,12 +293,13 @@ export class HwTestPanel {
   }
 
   async runMove(id) {
-    const { slot, throttle, ms } = memory.settings;
+    const { slot, throttle } = memory.settings;
+    const ms = id === "lane" ? laneMs(memory.settings.ms) : memory.settings.ms;
     try {
       const r = await this.begin(id, `test.${id}`, { slot, throttle, ms }, LONG);
       const ok = r.acked && !r.aborted && (id === "pulse" || r.lane_sent);
       const status = r.aborted ? "aborted" : !r.acked ? "fail" : ok ? "wait" : "fail";
-      this.setResult(id, { status, observed: null, ...r });
+      this.setResult(id, { status, observed: null, ...r, ms_sent: ms });
     } catch (e) {
       this.refused(id, e);
     }
@@ -282,6 +345,56 @@ export class HwTestPanel {
 
   renderAll() {
     for (const id of STEP_IDS) this.renderStep(id);
+    this.refreshRecap();
+    this.renderSummary();
+    this.renderKept();
+  }
+
+  // "Car 2 · throttle 3 · 1.0 s": what the next movement step will send
+  refreshRecap() {
+    const { slot, throttle, ms } = memory.settings;
+    for (const id of MOVE_IDS) {
+      const el = this.steps[id]?.recap;
+      if (!el) continue;
+      const base = { n: slot + 1, throttle };
+      if (id === "handback") { setText(el, t("hw.recap_short", base)); continue; }
+      const used = id === "lane" ? laneMs(ms) : ms;
+      let text = t("hw.recap", { ...base, s: used / 1000 });
+      if (used !== ms) text += ` ${t("hw.lane_min", { s: LANE_MIN_MS / 1000 })}`;
+      setText(el, text);
+    }
+  }
+
+  incomplete() {
+    return STEP_IDS.filter((id) => INCOMPLETE.has(memory.results[id]?.status ?? "not_run"));
+  }
+
+  renderSummary() {
+    const status = STEP_IDS.map((id) => memory.results[id]?.status ?? "todo");
+    const count = (k) => status.filter((x) => x === k).length;
+    const pass = count("pass"), fail = count("fail"), wait = count("wait");
+    const todo = STEP_IDS.length - pass - fail - wait;
+    setText(this.summary, t("hw.summary", { pass, total: STEP_IDS.length, wait, todo }) + (fail ? ` · ${t("hw.summary_fail", { fail })}` : ""));
+    const open = this.incomplete();
+    toggle(this.caution, "hidden", !open.length);
+    setText(this.caution, open.length ? t("hw.report.incomplete", { steps: open.map((id) => STEP_IDS.indexOf(id) + 1).join(", ") }) : "");
+  }
+
+  renderKept() {
+    toggle(this.kept, "hidden", !Object.keys(memory.results).length && !memory.notes.trim());
+  }
+
+  async clearKept() {
+    if (!await confirmModal({ title: t("hw.clear_confirm.title"), text: t("hw.clear_confirm.text"), confirmLabel: t("hw.clear"), danger: true })) return;
+    memory.results = {};
+    memory.notes = "";
+    memory.saved = null;
+    this.notes.value = "";
+    setText(this.saved, "");
+    keep();
+    this.sig = null;
+    this.renderAll();
+    if (this.state) this.update(this.state);
   }
 
   renderStep(id) {
@@ -304,13 +417,22 @@ export class HwTestPanel {
       const s = ((performance.now() - this.paused) / 1000).toFixed(1);
       return h("p.hw-timer", { text: t("hw.handback.timer", { s }) });
     }
+    if (this.moving && (id === "pulse" || id === "lane")) {
+      const s = Math.min((performance.now() - this.moving.at) / 1000, this.moving.ms / 1000).toFixed(1);
+      return h("p.hw-timer", { text: t("hw.move.timer", { s, total: this.moving.ms / 1000 }) });
+    }
     return h("p.note", { text: t(id === "latency" ? "hw.latency.running" : "hw.running") });
   }
 
-  question(id, text) {
-    return h("div.hw-ask", {}, h("p", { text }),
-      h("button.btn.go", { type: "button", onclick: () => this.answer(id, true) }, t("hw.yes")),
-      h("button.btn", { type: "button", onclick: () => this.answer(id, false) }, t("hw.no")));
+  // the buttons stay after the answer (it can be changed); the chosen one is highlighted
+  question(id, text, observed) {
+    const btn = (yes, cls) => {
+      const chosen = observed === yes;
+      return h(`button.btn${cls}${chosen ? ".on" : observed != null ? ".off" : ""}`, {
+        type: "button", "aria-pressed": observed == null ? null : String(chosen), onclick: () => this.answer(id, yes),
+      }, yes ? t("hw.yes") : t("hw.no"));
+    };
+    return h("div.hw-ask", {}, h("p", { text }), btn(true, ".go"), btn(false, ""));
   }
 
   resultParts(id, r) {
@@ -325,8 +447,10 @@ export class HwTestPanel {
     } else {
       out.push(h("p.note", { text: t("hw.move.done", { throttle: r.applied_peak, ms: r.held_ms }) }));
     }
-    if (r.status === "wait") out.push(this.question(id, t(`hw.ask.${id}`)));
-    else if (r.observed != null) out.push(h("p.note", { text: r.observed ? t("hw.answered_yes") : t("hw.answered_no") }));
+    if (r.status === "wait" || r.observed != null) {
+      out.push(this.question(id, t(`hw.ask.${id}`), r.observed));
+      if (r.observed != null) out.push(h("p.note", { text: r.observed ? t("hw.answered_yes") : t("hw.answered_no") }));
+    }
     return out;
   }
 
@@ -361,6 +485,7 @@ export class HwTestPanel {
     for (const id of STEP_IDS) steps[id] = memory.results[id] ?? { status: "not_run" };
     return {
       format: 1, kind: "racelab-hardware-test", created: now(), language: lang,
+      incomplete: this.incomplete(), // steps waiting for an answer, not run, refused or interrupted
       racelab: store.meta?.version ?? null, settings: { ...memory.settings }, notes: memory.notes.trim(),
       link: Object.fromEntries(["state", "transport", "device", "version", "bots_supported", "bot_transport", "bot_module", "rtt_ms"].map((k) => [k, l[k] ?? null])),
       steps,

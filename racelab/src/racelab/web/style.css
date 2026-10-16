@@ -74,7 +74,8 @@ a { color: inherit; }
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  /* above the drawer (41) and the modal (70), below the quit screen (80): STOP is never covered */
+  z-index: 75;
   height: var(--topbar);
   display: flex;
   align-items: center;
@@ -188,6 +189,18 @@ a { color: inherit; }
   font-weight: 800;
   letter-spacing: .08em;
   cursor: pointer;
+}
+/* while a dialog is open the rest of the top bar is inert; STOP stays clickable */
+body:has(.drawer, .modal) .topbar { pointer-events: none; }
+body:has(.drawer, .modal) .estop { pointer-events: auto; }
+.bots-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 179, 64, .16);
+  color: var(--caution);
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: .07em;
 }
 .estop:hover { background: rgba(255, 69, 58, .26); }
 .estop.live { background: var(--stop-solid); border-color: var(--stop); color: #fff; }
@@ -493,6 +506,9 @@ h1.page {
 .bot .seg.dim-off button.on { background: transparent; box-shadow: 0 0 0 1px var(--line-2) inset; color: var(--text-2); }
 .bot-head .toggle { margin-left: auto; }
 .bot-head .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.fader-col { display: flex; flex-direction: column; gap: 6px; }
+.fader-zero { display: none; height: 40px; border-radius: var(--r); border: 1px solid var(--line-2); background: var(--raised); font-weight: 700; font-size: 16px; cursor: pointer; }
+.fader-zero:disabled { opacity: .35; cursor: not-allowed; }
 .bot-body { display: grid; grid-template-columns: 44px 1fr; gap: 12px; align-items: stretch; }
 .bot-readout { display: flex; flex-direction: column; justify-content: space-between; gap: 8px; min-width: 0; }
 .gas { font-size: 38px; font-weight: 650; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
@@ -553,7 +569,8 @@ h1.page {
 
 .bot-actions { display: flex; gap: 6px; }
 .bot-actions .btn { flex: 1; padding: 0 6px; }
-.unlock.on { color: var(--caution); border-color: rgba(255, 179, 64, .5); }
+.bot-actions .unlock { height: auto; min-height: 28px; padding: 3px 6px; white-space: normal; line-height: 1.15; }
+.unlock.on { background: var(--caution); border-color: var(--caution); color: #000; font-weight: 700; }
 
 .spark { width: 100%; height: 26px; display: block; }
 .spark path { fill: none; stroke: var(--car, var(--text-2)); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
@@ -587,10 +604,10 @@ h1.page {
 .toggle input:focus-visible + i { outline: 2px solid var(--text-2); outline-offset: 2px; }
 
 /* side drawer (profile settings) */
-.drawer-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); z-index: 40; }
+.drawer-backdrop { position: fixed; inset: var(--topbar) 0 0 0; background: rgba(0, 0, 0, .5); z-index: 40; }
 .drawer {
   position: fixed;
-  top: 0;
+  top: var(--topbar);
   right: 0;
   bottom: 0;
   width: min(420px, 100vw);
@@ -610,7 +627,7 @@ h1.page {
 /* confirmation modal */
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  inset: var(--topbar) 0 0 0;
   z-index: 70;
   display: grid;
   place-items: center;
@@ -645,8 +662,8 @@ h1.page {
   font-size: 13px;
   animation: slidein .15s ease-out;
 }
-.toast.error { border-color: rgba(255, 69, 58, .5); }
-.toast.error::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stop); margin-right: 8px; vertical-align: 1px; }
+.toast.error, .toast.stop { border-color: rgba(255, 69, 58, .5); }
+.toast.error::before, .toast.stop::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stop); margin-right: 8px; vertical-align: 1px; }
 
 /* offline banner */
 .offline {
@@ -717,6 +734,7 @@ body.fw-on main { padding-top: 56px; }
   .race-grid { grid-template-columns: minmax(0, 1fr) 300px; }
 }
 @media (max-width: 1100px) {
+  .cx-row { flex-direction: column; align-items: stretch; }
   .race-grid { grid-template-columns: 1fr; grid-template-areas: "timing" "bots" "side"; }
   .side { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
   .session-bar { grid-template-columns: 1fr auto auto; gap: 18px; }
@@ -724,7 +742,6 @@ body.fw-on main { padding-top: 56px; }
   .session-actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
 }
 @media (max-width: 860px) {
-  .cx-row { flex-direction: column; align-items: stretch; }
   .topbar { gap: 14px; padding: 0 12px; }
   .tabs a { padding: 7px 8px; }
   .link-pill .label { display: none; }
@@ -737,11 +754,9 @@ body.fw-on main { padding-top: 56px; }
   .topbar { gap: 8px; }
   .brand span.word { display: none; }
   .tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .tabs a { padding: 6px 7px; font-size: 13px; }
-  .topbar-right { gap: 8px; flex: none; }
+  .topbar-right { gap: 6px; flex: none; }
   .link-pill { padding: 0 9px; }
-  .estop { padding: 0 10px; flex: none; }
-  .mode-switch { display: none; }
+  .estop { flex: none; }
   .bots-head { flex-wrap: wrap; }
   .bots-head span.dim { order: 3; flex-basis: 100%; }
   .bots-invite { flex-direction: column; align-items: stretch; gap: 14px; }
@@ -791,8 +806,31 @@ body.bigscreen { background: #000; overflow: hidden; }
 .go i.on { background: #30d158 !important; box-shadow: 0 0 2.5vh .3vh rgba(48, 209, 88, .8) !important; }
 .blink i.on { animation: pulse .5s infinite; }
 
+/* the column labels and the rows share one grid template (--bs-cols) */
+.bs-board {
+  --rowh: calc((71vh - (var(--n) - 1) * 1.2vh) / var(--n));
+  --bs-cols: 6vw min(calc(var(--rowh) * .8), 7vw) minmax(0, 1fr) 7vw 13vw 12vw 10vw;
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+  min-height: 0;
+}
+.bs-cols {
+  display: grid;
+  grid-template-columns: var(--bs-cols);
+  gap: 0 2vw;
+  padding-right: 2vw;
+  border-left: 1.4vw solid transparent;
+  font-size: 1.8vh;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #8a8d94;
+}
+.bs-cols .r { text-align: right; }
+.bs-cols .c { text-align: center; }
+.bs-cols .invisible { visibility: hidden; }
 .bs-list {
-  --rowh: calc((76vh - (var(--n) - 1) * 1.2vh) / var(--n));
   display: grid;
   grid-template-rows: repeat(var(--n), var(--rowh));
   gap: 1.2vh;
@@ -800,7 +838,7 @@ body.bigscreen { background: #000; overflow: hidden; }
 }
 .bs-row {
   display: grid;
-  grid-template-columns: 6vw min(calc(var(--rowh) * .8), 7vw) minmax(0, 1fr) 7vw 13vw 12vw 10vw;
+  grid-template-columns: var(--bs-cols);
   align-items: center;
   gap: 0 2vw;
   padding-right: 2vw;
@@ -864,6 +902,23 @@ body.bigscreen { background: #000; overflow: hidden; }
 .bs-step.p2 .bs-step-block { height: 22vh; }
 .bs-step.p3 .bs-step-block { height: 16vh; }
 
+.bs-stop {
+  position: fixed;
+  left: 2vw;
+  bottom: 2vh;
+  z-index: 5;
+  padding: .8vh 2vh;
+  border: 2px solid var(--stop);
+  border-radius: 999px;
+  background: rgba(255, 69, 58, .16);
+  color: #ff6b61;
+  font-size: 2.2vh;
+  font-weight: 800;
+  letter-spacing: .08em;
+  cursor: pointer;
+}
+.bs-stop:hover { background: rgba(255, 69, 58, .3); }
+.bs-stop.engaged, .bs-stop:disabled { background: var(--stop-solid); border-color: #fff; color: #fff; opacity: 1; cursor: default; animation: pulse 1.2s infinite; }
 .bs-controls { position: fixed; right: 2vw; bottom: 2vh; display: flex; gap: 8px; opacity: 0; transition: opacity .2s; }
 .bs.show-controls .bs-controls, .bs-controls:focus-within { opacity: 1; }
 
@@ -879,6 +934,27 @@ body.bigscreen { background: #000; overflow: hidden; }
   .sw { width: 30px; height: 30px; }
   .toggle::before { content: ""; position: absolute; inset: -12px -6px; }
   .estop { height: 44px; }
+  .fader-zero { display: block; }
+  .bot-actions .unlock { min-height: 40px; }
+}
+
+/* phone header: after the touch block so these compact rules win; the tab strip scrolls and fades out on the right,
+   the Normal / With bots switch stays (compact) */
+@media (max-width: 560px) {
+  /* two rows: brand, link, mode and STOP on top; the four tabs get the whole width below (one row
+     left them about 44 px and the active tab out of view). --topbar follows, so every sticky offset
+     (drawer, modal, hardware-test bar) stays under the bar and STOP is never covered. */
+  :root { --topbar: 96px; }
+  .topbar { padding: 0 8px; flex-wrap: wrap; align-content: space-evenly; row-gap: 0; }
+  .topbar-right { margin-left: auto; }
+  .tabs { order: 3; flex: 1 0 100%; justify-content: space-between; }
+  .tabs a { padding: 6px 8px; font-size: 13px; }
+  .estop { padding: 0 8px; min-width: 52px; font-size: 13px; letter-spacing: .04em; }
+  .mode-switch button { padding: 0 7px; font-size: 11.5px; white-space: nowrap; }
+  .link-pill { gap: 5px; padding: 0 8px; }
+}
+@media (max-width: 430px) {
+  .brand { display: none; } /* the Race tab is the same link; the room goes to the tabs */
 }
 
 /* ------------------------------------------------------------ reduced motion */

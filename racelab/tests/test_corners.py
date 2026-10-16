@@ -338,6 +338,26 @@ def test_manager_drives_from_positions_and_falls_back_when_stale(env):
     assert link.sent[0] == 8  # positions exist but not for this car
 
 
+def test_source_flag_says_map_or_pace_and_is_not_a_saved_field():
+    p = CornersProfile(ramp_s=0)
+    assert p.source is None and "source" not in p.to_dict()
+    p.throttle(Context(now=0.0, since_cross_s=None, laps=0, pos=dict(FRESH), geometry=GEO))
+    assert p.source == "map"
+    p.throttle(Context(now=0.1, since_cross_s=None, laps=0, pos=None, geometry=GEO))
+    assert p.source == "pace"
+    p.reset()
+    assert p.source is None
+
+
+def test_snapshot_carries_the_drive_source(env):
+    bots, link, _ = env
+    tick(bots, good_positions())
+    assert bots.snapshot()[0]["drive"] == "map"
+    tick(bots, None)
+    assert bots.snapshot()[0]["drive"] == "pace"
+    assert bots.snapshot()[1]["drive"] is None  # another slot, constant profile
+
+
 def test_manager_caps_and_zeroes_while_the_car_is_off_track(env):
     bots, link, _ = env
     tick(bots, good_positions(v=0.0))

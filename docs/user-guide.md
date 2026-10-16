@@ -90,17 +90,19 @@ All the configuration is documented in
   Display), pit stops.
 - **Bots**: in Normal mode, the card "Race against the computer" → **Turn on
   bots** (or **With bots** at the top). Then one switch per car: on, the
-  computer drives it; off, its controller does. How it drives: **Auto**
-  (autopilot, the default: constant throttle, target lap time, throttle map,
-  rival or corner speed — **Settings**, see [Auto driver profiles](#auto-driver-profiles);
-  it waits for the race to start), **Manual** (0–15 fader
-  with a safety detent above 12) or **API** (an external agent). The Lane button
+  computer drives it; off, its controller does. A car you switch on starts
+  in **Manual** (throttle 0: it takes the car, nothing moves until you push the
+  fader). How it drives: **Auto** (autopilot: constant throttle, target lap time,
+  throttle map, rival or corner speed — **Settings**, see
+  [Auto driver profiles](#auto-driver-profiles); it waits for the race to start),
+  **Manual** (0–15 fader with a safety detent above 12) or **API** (an external agent). The Lane button
   = lane change at the next switch. **Back to normal** hands every car back.
 - The autopilots do not handle pit stops yet: in the CU's fuel mode, a bot
   runs dry (flagged as out of fuel; bring it in with Lane at the pit
   entrance, or turn off the CU's fuel mode for long sessions with bots).
-- `STOP` (or `Esc`): emergency stop, throttle 0 on every bot. It can only be
-  cleared with the mouse.
+- `STOP` (or `Esc`): emergency stop, throttle 0 on every bot. It works from every
+  screen, also with a drawer or a dialog open (`Esc` closes it and stops). It can
+  only be cleared with the mouse; `Esc` while it is on only says so.
 - **Big screen**: a view of the ranking readable from across the room.
 
 ## Auto driver profiles
@@ -218,8 +220,10 @@ FAIL, Interrupted, Not run).
    and a duration (0.2 to 2 s). The server holds the throttle, then forces 0
    and hands the slot back; the page never times it. Answer "did the car move,
    then stop?".
-4. **Lane change**: same run, plus one lane request. Answer whether the car changed
-   lane at the next lane changer.
+4. **Lane change**: same run, plus one lane request. Put the car just before a lane
+   changer (less than 30 cm), on a straight; the run lasts 1.5 s or more (a shorter
+   chosen duration is raised to 1.5 s). Answer whether the car changed lane at the
+   lane changer.
 5. **Hand-back (CU watchdog)**: RaceLab holds a throttle, then stops refreshing the
    `C` frame for 1.5 s. About 0.75 s later the CU must give the slot back to its
    controller, so the car stops (with the controller idle or unplugged). RaceLab

@@ -2,7 +2,8 @@
 // Everything is sized on the screen height; F = fullscreen.
 import { STATE_LABEL, clock, gap, h, inkOn, lapTime, setText, toggle } from "../dom.js";
 import { t } from "../i18n.js";
-import { onEvent, sessionLabel } from "../store.js";
+import { onEvent, sessionLabel, store } from "../store.js";
+import { estopButton, run } from "../ui/components.js";
 
 const LAP_TYPES = new Set(["race", "rival"]);
 const TIMED = new Set(["endurance", "qualifying"]);
@@ -26,7 +27,13 @@ export class ScreenView {
       h("div.bs-head-center", {}, this.counter, this.counterLabel),
       h("div.bs-head-right", {}, this.lightsSmall.el, this.clock));
 
+    // column labels share the row grid (see .bs-row / .bs-cols in style.css)
+    this.cols = h("div.bs-cols", { "aria-hidden": "true" },
+      h("div.c", { text: t("race.col.pos") }), h("div"), h("div", { text: t("race.col.driver") }),
+      h("div.r", { text: t("race.col.laps") }), h("div.r", { text: t("race.col.last") }), h("div.r", { text: t("race.col.gap") }),
+      this.fuelCol = h("div.r", { text: t("race.col.fuel") }));
     this.list = h("div.bs-list");
+    this.board = h("div.bs-board", {}, this.cols, this.list);
     this.empty = h("div.bs-empty.hidden", {}, h("div", { text: t("screen.waiting") }),
       h("div.bs-empty-sub", { text: t("screen.waiting_sub") }));
 
@@ -36,10 +43,14 @@ export class ScreenView {
     this.overlay = h("div.bs-overlay.hidden", {}, this.lightsBig.el, this.banner);
     this.podium = h("div.bs-podium.hidden");
 
-    this.exit = h("div.bs-controls", {},
+    // STOP on the big screen: a small pill that stays visible while a bot drives (engage only: a stray
+    // click can never release it), and a button with the controls (same op as the top bar: engage or release)
+    this.stopPill = h("button.bs-stop.hidden", { type: "button", onclick: () => this.engageStop() });
+    this.stopBtn = h("button.btn.danger.hidden", { type: "button", onclick: () => this.toggleStop() });
+    this.exit = h("div.bs-controls", {}, this.stopBtn,
       h("button.btn", { onclick: () => this.fullscreen() }, t("screen.fullscreen")),
       h("a.btn", { href: "#/race" }, t("screen.exit")));
-    this.el = h("div.bs", {}, this.header, this.list, this.empty, this.podium, this.overlay, this.exit);
+    this.el = h("div.bs", {}, this.header, this.board, this.empty, this.podium, this.overlay, this.stopPill, this.exit);
     root.append(this.el);
 
     // the buttons only show up when the mouse moves
@@ -65,6 +76,29 @@ export class ScreenView {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   }
 
+  engageStop() {
+    if (store.state?.mode === "advanced" && !store.state.estop) run("estop").catch(() => {});
+  }
+
+  toggleStop() {
+    estopButton(); // engage at once; release asks first, never right after engaging
+  }
+
+  updateStop(state) {
+    const advanced = state.mode === "advanced" && state.link.transport !== "none";
+    const live = (state.bots || []).some((b) => b.active);
+    const engaged = !!state.estop;
+    toggle(this.stopPill, "hidden", !advanced || !(live || engaged));
+    toggle(this.stopPill, "engaged", engaged);
+    setText(this.stopPill, engaged ? t("estop.engaged") : t("estop.stop"));
+    this.stopPill.title = engaged ? t("estop.title_engaged") : t("estop.title");
+    this.stopPill.setAttribute("aria-pressed", engaged ? "true" : "false");
+    this.stopPill.disabled = engaged; // released from the controls button (or the top bar), never by a stray click here
+    toggle(this.stopBtn, "hidden", !advanced);
+    setText(this.stopBtn, engaged ? t("hw.release_stop") : t("estop.stop"));
+    this.stopBtn.setAttribute("aria-pressed", engaged ? "true" : "false");
+  }
+
   fullscreen() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else document.documentElement.requestFullscreen?.().catch(() => {});
@@ -84,6 +118,7 @@ export class ScreenView {
 
   update(state) {
     const sess = state.session;
+    this.updateStop(state);
     setText(this.title, sess.state === "idle" ? "RaceLab" : sess.title || (sess.type ? sessionLabel(sess.type) : ""));
     setText(this.state, sess.false_start ? t("state.false_start") : STATE_LABEL[sess.state] || "");
     this.state.className = `bs-state ${sess.false_start ? "stop" : sess.state}`;
@@ -123,11 +158,12 @@ export class ScreenView {
     const cars = state.cars.filter((c) => c.enabled || c.laps > 0).slice(0, MAX_ROWS);
     const idle = sess.state === "idle";
     toggle(this.empty, "hidden", !idle);
-    toggle(this.list, "hidden", idle || sess.state === "finished");
+    toggle(this.board, "hidden", idle || sess.state === "finished");
     this.renderPodium(state, sess.state === "finished");
     if (idle) return;
-    this.list.style.setProperty("--n", Math.max(cars.length, 4));
+    this.board.style.setProperty("--n", Math.max(cars.length, 4));
     const fuel = state.cu.pit_lane || state.cu.fuel_mode;
+    toggle(this.fuelCol, "invisible", !fuel);
     const order = cars.map((car) => this.fillRow(car, sess, fuel));
     for (const [slot, row] of this.rows) {
       if (!cars.some((c) => c.slot === slot)) { row.el.remove(); this.rows.delete(slot); }

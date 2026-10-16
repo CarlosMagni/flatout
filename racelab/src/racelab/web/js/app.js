@@ -2,7 +2,7 @@
 import { h, setText, toggle } from "./dom.js";
 import { t, translateStatic } from "./i18n.js";
 import { botsUnavailable, connect, onEvent, onState, refreshMeta, store } from "./store.js";
-import { run, toast } from "./ui/components.js";
+import { estopButton, noteEstop, run, toast } from "./ui/components.js";
 import { RaceView } from "./views/race.js";
 import { SetupView } from "./views/setup.js";
 import { HistoryView } from "./views/history.js";
@@ -25,6 +25,8 @@ function route() {
     if (a.dataset.route === key) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
+  // phone: the tab strip scrolls sideways; after this turn, once the top bar is shown again (hidden on the big screen)
+  setTimeout(() => document.querySelector("#tabs a.active")?.scrollIntoView?.({ inline: "center", block: "nearest" }), 0);
   if (currentName === key && current?.route) {
     current.route(rest);
     return;
@@ -42,6 +44,7 @@ function route() {
 const pill = document.getElementById("link-pill");
 const pillDot = pill.querySelector(".dot");
 const pillLabel = pill.querySelector(".label");
+const botsBadge = pill.querySelector(".bots-badge");
 const modeSwitch = document.getElementById("mode-switch");
 const estopBtn = document.getElementById("estop");
 let offlineBanner = null;
@@ -107,10 +110,13 @@ function updateTopbar(state) {
   }
 
   const advanced = state.mode === "advanced";
+  toggle(botsBadge, "hidden", !advanced);
   toggle(estopBtn, "hidden", !advanced || link.transport === "none");
   const live = (state.bots || []).some((b) => b.active);
   toggle(estopBtn, "live", live && !state.estop);
   toggle(estopBtn, "engaged", !!state.estop);
+  noteEstop(!!state.estop);
+  estopBtn.setAttribute("aria-pressed", state.estop ? "true" : "false");
   setText(estopBtn, state.estop ? t("estop.engaged") : t("estop.stop"));
   estopBtn.title = state.estop ? t("estop.title_engaged") : t("estop.title");
 }
@@ -122,20 +128,14 @@ modeSwitch.addEventListener("click", (ev) => {
   }
 });
 
-function estop() {
-  if (!store.state || store.state.mode !== "advanced") return;
-  if (store.state.estop) run("estop.clear").catch(() => {});
-  else run("estop").catch(() => {});
-}
-estopBtn.addEventListener("click", estop);
+estopBtn.addEventListener("click", () => estopButton()); // engage at once; release asks first (components.js)
 
-// Escape = emergency stop (never the release: releasing is a deliberate mouse click).
-// Not while typing text, where Escape means cancel.
+// Escape = emergency stop, ALWAYS: under a drawer or a dialog (which also close), in a text field,
+// in a select. Engage only: releasing is a deliberate click on STOP. If it is already on, say so.
 document.addEventListener("keydown", (ev) => {
-  const typing = ev.target.closest?.("input[type=text], input:not([type]), textarea, select");
-  if (ev.key === "Escape" && !typing && !document.querySelector(".drawer, .modal") && store.state?.mode === "advanced" && !store.state.estop) {
-    run("estop").catch(() => {});
-  }
+  if (ev.key !== "Escape" || store.state?.mode !== "advanced") return;
+  if (!store.state.estop) run("estop").catch(() => {});
+  else if (!ev.repeat) toast(t("estop.already"), "stop");
 });
 
 // ------------------------------------------------------------ startup

@@ -316,6 +316,7 @@ class BotManager:
                 "manual": s.manual,
                 "gate": s.gate if s.driver else None,
                 "profile": s.profile.to_dict(),
+                "drive": getattr(s.profile, "source", None),  # corners profile: "map" or "pace"
                 "agent": s.agent,
                 "api_age_ms": round((now - s.api_last) * 1000) if s.driver == "api" else None,
                 "lane_pending": now < s.lane_pending_until,

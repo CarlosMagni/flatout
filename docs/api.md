@@ -116,7 +116,8 @@ See [architecture.md](architecture.md) §4 for `session`, `cu`, `cars`. In addit
            "rtt_ms": 21.4, "rx_per_s": 38.0, "error": null, …},
   "bots": [{"slot": 0, "active": true, "driver": "api", "throttle": 7, "requested": 7,
             "applied": 7, "gate": null, "agent": "rl-01", "api_age_ms": 40,
-            "lane_pending": false, "profile": {…}}],
+            "lane_pending": false, "profile": {…},
+            "drive": null}],  // corners profile: "map" (from the map) | "pace" (fallback), else null
   "cars": [{"slot": 0, …, "controller": "api"}],   // human | bot | api
   "connectors": [{"agent": "camera", "name": "Camera", "ui_url": "http://…", "status": "tracking"}],
   "positions": {"source": "sim", "age_ms": 0, "stale": false, "cars": [{"slot": 0, "s": 0.42, …}]},
@@ -220,6 +221,8 @@ refused with the virtual CU.
 | `connector.set` | `name` (1..40 chars), `ui_url?` (http/https only, <= 300 chars), `status?` (<= 80 chars) | set this connection's card (replaces the previous one); returns `{agent, name, ui_url, status}` |
 | `connector.clear` | | remove this connection's card |
 
+- The UI adds `lang=en|fr` (its current language) to the `ui_url` query, keeping the
+  existing query, so a connector page can follow the UI language.
 - One card per agent connection. It is **removed automatically when that agent
   disconnects** (same as the `track.*` ownership).
 - Text is trimmed and must not contain control characters. Over-long values and any

@@ -127,7 +127,8 @@ export class HistoryView {
 
   renderList(body, rows) {
     if (!rows.length) {
-      body.replaceChildren(stateBlock("empty", t("history.empty.title"), t("history.empty.text")));
+      body.replaceChildren(stateBlock("empty", t("history.empty.title"), t("history.empty.text"),
+        h("a.btn.primary", { href: "#/setup" }, t("history.empty.cta"))));
       return;
     }
     const items = rows.map((r) => ({ ...r, epoch: epochOf(r.started, r.id) }));

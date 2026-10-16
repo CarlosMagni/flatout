@@ -450,6 +450,9 @@ a.hrow:focus-visible { outline: 2px solid var(--text-2); outline-offset: -2px; }
 .hw-warn { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
 .hw-warn strong { font-size: 15px; color: var(--caution); }
 .hw-bar .btn { flex: none; min-width: 110px; }
+/* STOP here is the one control that matters: solid red, big */
+.hw-bar .btn.danger.lg { height: 52px; min-width: 140px; background: var(--stop); border-color: var(--stop); color: #fff; font-size: 18px; font-weight: 800; letter-spacing: .06em; }
+.hw-bar .btn.danger.lg:hover { background: var(--stop); filter: brightness(1.1); }
 .hw-setup { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 14px 0 4px; }
 .hw-setup label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
 .hw-why { color: var(--caution); }
@@ -462,6 +465,13 @@ a.hrow:focus-visible { outline: 2px solid var(--text-2); outline-offset: -2px; }
 .hw-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--raised); border: 1px solid var(--line-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .hw-run { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .hw-body { margin-top: 10px; }
+.hw-recap { margin: 10px 0 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hw-reason { margin: 6px 0 0; color: var(--caution); }
+.hw-summary { margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raised); font-weight: 600; font-variant-numeric: tabular-nums; }
+.hw-caution { color: var(--caution); }
+.hw-kept { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.hw-ask .btn.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.hw-ask .btn.off { opacity: .5; }
 .hw-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; }
 .hw-stat { display: flex; flex-direction: column; font-size: 11.5px; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; }
 .hw-stat b { font-size: 15px; color: var(--text); font-weight: 600; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }

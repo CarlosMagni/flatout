@@ -341,6 +341,7 @@ class CornersProfile(TargetLapProfile):
 
     _src = None  # shape the tables were computed from (a cache: survives reset())
     _geo = None
+    source = None  # "map" (driven from positions + shape) or "pace" (fallback), None before the first tick; not a field
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -353,6 +354,7 @@ class CornersProfile(TargetLapProfile):
 
     def reset(self) -> None:
         super().reset()
+        self.source = None
         self._f: dict[tuple[int, int], float] = {}  # (lane, corner) -> speed factor
         self._frozen: set[tuple[int, int]] = set()
         self._key = None
@@ -452,6 +454,7 @@ class CornersProfile(TargetLapProfile):
                 logger.exception("corners profile: falling back to target pace")
                 self._warned = True
             self._drop()
+        self.source = "map" if value is not None else "pace"
         if value is not None:
             self._driven = (ctx.now, value)
         else:

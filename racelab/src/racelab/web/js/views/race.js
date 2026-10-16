@@ -11,6 +11,7 @@ const LAP_MODES = new Set(["race", "rival", "elimination"]);
 const TIMED = new Set(["endurance", "qualifying"]);
 const QUICK_RACE_LAPS = 10;
 const QUICK_QUALIFYING_MIN = 5;
+const SPACE_QUIET_MS = 2000;
 
 export class RaceView {
   constructor(root) {
@@ -26,6 +27,7 @@ export class RaceView {
       this.track = null;
       this.mapBox.querySelector(".trackmap").replaceChildren();
     }));
+    this.transitionAt = -Infinity; // performance.now() of the last session state change
     this.keyHandler = (ev) => this.onKey(ev);
     document.addEventListener("keydown", this.keyHandler);
   }
@@ -118,8 +120,9 @@ export class RaceView {
   // ------------------------------------------------------------ update
 
   update(state) {
-    this.state = state;
     const sess = state.session;
+    if (this.state && this.state.session.state !== sess.state) this.transitionAt = performance.now();
+    this.state = state;
     this.updateBar(state, sess);
     this.updateTiming(state, sess);
     this.updateBest(state, sess);
@@ -194,7 +197,7 @@ export class RaceView {
       finishing: [b(t("race.act.close_now"), "", () => run("race.stop").catch(() => {}))],
       finished: [b(t("race.act.results"), "ghost", () => (location.hash = "#/history")), b(t("race.act.new"), "primary", () => this.again())],
     }[st] || [];
-    this.actions.replaceChildren(...(st === "idle" ? list : [this.bigScreenButton(), ...list]));
+    this.actions.replaceChildren(this.bigScreenButton(), ...list);
   }
 
   async again() {
@@ -206,11 +209,13 @@ export class RaceView {
 
   onKey(ev) {
     if (ev.key !== " " || ev.repeat) return;
-    if (ev.target.closest("input, textarea, select, button, .fader") || document.querySelector(".drawer, .modal")) return;
+    if (ev.target.closest("input, textarea, select, button, a, summary, [tabindex], .fader") || document.querySelector(".drawer, .modal")) return;
     const st = this.state?.session.state;
     const op = { grid: "race.start", running: "race.pause", paused: "race.resume" }[st];
     if (op) {
       ev.preventDefault();
+      // a second press right after a change (start, pause...) is a double tap, not a new order
+      if (performance.now() - this.transitionAt < SPACE_QUIET_MS) return;
       run(op).catch(() => {});
     }
   }
@@ -472,23 +477,26 @@ function setMode(mode) {
 
 // ------------------------------------------------------------ bot card
 
-// "Auto" first and chosen by default: switching a car on lets the computer drive it
-// (it waits for the race to start)
+// Switching a car on takes it in "manual" (throttle 0: nothing moves until the slider is pushed);
+// Auto is one tap away
+const DEFAULT_DRIVER = "manual";
 const DRIVER_OPTS = [
   { value: "profile", label: t("bot.driver.profile"), title: t("bot.driver.profile_title") },
   { value: "manual", label: t("bot.driver.manual"), title: t("bot.driver.manual_title") },
   { value: "api", label: t("bot.driver.api"), title: t("bot.driver.api_title") },
 ];
 
+const HOVER = matchMedia("(hover: hover)"); // no keyboard hint on a touch screen
+
 class BotCard {
   constructor(slot) {
     this.slot = slot;
     this.inflight = false;
     this.queued = null;
-    this.choice = "profile";
+    this.choice = DEFAULT_DRIVER;
     this.carno = h("span.carno");
     this.name = h("span.name");
-    this.toggle = Toggle(false, (on) => (on ? this.setDriver(this.choice) : this.setDriver(null)), t("bot.toggle_aria"));
+    this.toggle = Toggle(false, (on) => (on ? this.setDriver(this.choice) : this.setDriver(null)));
     this.toggle.el.title = t("bot.toggle_title");
     this.seg = Segmented(DRIVER_OPTS, this.choice, (v) => this.setDriver(v));
     this.fader = Fader({ onChange: (v) => this.sendThrottle(v), limit: store.meta?.safety?.confirm_throttle_above ?? 12 });
@@ -497,13 +505,13 @@ class BotCard {
     this.gas = h("div.gas", {}, this.gasValue, this.gasLabel);
     this.note = h("div.bot-note");
     this.lane = h("button.btn.sm", { title: t("bot.lane_title"), onclick: () => run("bot.lane", { slot }).catch(() => {}) }, t("bot.lane"));
-    this.unlock = h("button.btn.sm.unlock", { title: t("bot.unlock_title"), onclick: () => this.toggleUnlock() }, "13–15");
+    this.unlock = h("button.btn.sm.unlock", { title: t("bot.unlock_title"), onclick: () => this.toggleUnlock() }, t("bot.unlock_off"));
     this.gear = h("button.btn.sm", { title: t("bot.settings_title"), onclick: () => this.openProfile() }, t("bot.settings"));
     this.spark = Spark();
-    this.el = h("div.bot", {},
+    this.el = h("div.bot", { role: "group" },
       h("div.bot-head", {}, this.carno, this.name, this.toggle.el),
       this.seg.el,
-      h("div.bot-body", {}, this.fader.el, h("div.bot-readout", {}, this.gas, this.note)),
+      h("div.bot-body", {}, h("div.fader-col", {}, this.fader.el, this.fader.zero), h("div.bot-readout", {}, this.gas, this.note)),
       h("div.bot-actions", {}, this.lane, this.unlock, this.gear),
       this.spark.el);
   }
@@ -515,10 +523,15 @@ class BotCard {
     this.carno.style.color = inkOn(color);
     setText(this.carno, this.slot + 1);
     setText(this.name, car?.name || t("bot.slot", { n: this.slot + 1 }));
-    this.fader.el.setAttribute("aria-label", t("bot.fader_aria", { name: this.name.textContent }));
+    const who = this.name.textContent;
+    this.el.setAttribute("aria-label", who);
+    this.fader.el.setAttribute("aria-label", t("bot.fader_aria", { name: who }));
+    this.fader.zero.setAttribute("aria-label", t("bot.zero_aria", { name: who }));
+    this.toggle.input.setAttribute("aria-label", t("bot.toggle_aria", { name: who }));
+    this.seg.el.setAttribute("aria-label", t("bot.driver_aria", { name: who }));
     const connected = state.link.state === "connected";
     const driver = bot.driver;
-    if (driver) this.choice = driver;
+    this.choice = driver || DEFAULT_DRIVER; // a released car comes back in manual, whatever it ran before
     this.seg.set(this.choice);
     toggle(this.seg.el, "dim-off", !driver);
     this.seg.buttons.forEach((b) => (b.disabled = !usable || !connected || (!driver && car?.enabled === false)));
@@ -529,7 +542,7 @@ class BotCard {
 
     const shown = driver ? bot.throttle ?? 0 : 0;
     this.gasValue.nodeValue = driver ? String(shown) : "–";
-    setText(this.gasLabel, driver ? t("bot.gas") : t("bot.controller"));
+    setText(this.gasLabel, driver ? t("bot.gas") : "");
     if (driver === "manual") {
       this.fader.setMode(state.estop ? "disabled" : "edit");
       this.fader.set(bot.manual);
@@ -540,17 +553,26 @@ class BotCard {
     toggle(this.unlock, "hidden", driver !== "manual");
     toggle(this.unlock, "on", this.fader.unlocked);
     this.unlock.setAttribute("aria-pressed", this.fader.unlocked ? "true" : "false");
+    setText(this.unlock, this.fader.unlocked ? t("bot.unlock_on") : t("bot.unlock_off"));
     toggle(this.gear, "hidden", driver !== "profile");
     this.lane.disabled = !driver || !connected;
+    // the accessible name keeps the visible text and adds the car
+    for (const b of [this.lane, this.unlock, this.gear]) b.setAttribute("aria-label", `${b.textContent}, ${who}`);
 
     let note;
     if (!driver && !enabled) note = [h("span.faint", { text: t("bot.disabled") })];
     else if (!driver) note = [h("span.faint", { text: t("bot.controller_in_charge") })];
     else if (bot.gate) note = [h("span.chip.caution", { text: GATE_LABEL[bot.gate] || bot.gate })];
     else if (bot.fuel_empty) note = [h("span.chip.stop", { text: t("bot.tank_empty") }), h("div.faint", { text: t("bot.tank_hint"), style: { marginTop: "4px" } })];
-    else if (driver === "profile") note = [h("span", { text: profileText(bot.profile) })];
+    else if (driver === "profile") {
+      note = [h("span", { text: profileText(bot.profile) })];
+      // corners profile: is it driving from the map, or holding the lap pace because positions are missing?
+      if (bot.profile?.kind === "corners" && bot.drive) {
+        note.push(h(`div.chip.${bot.drive === "map" ? "info" : "caution"}`, { text: t(`bot.drive.${bot.drive === "map" ? "map" : "pace"}`), style: { marginTop: "4px" } }));
+      }
+    }
     else if (driver === "api") note = [h("span", { text: bot.agent ? t("bot.agent", { name: bot.agent }) : t("bot.agent_waiting") })];
-    else note = [h("span.faint", { text: bot.requested !== bot.throttle ? t("bot.requested", { n: bot.requested }) : t("bot.keyboard_hint") })];
+    else note = [h("span.faint", { text: bot.requested !== bot.throttle ? t("bot.requested", { n: bot.requested }) : t(HOVER.matches ? "bot.keyboard_hint" : "bot.slide_hint") })];
     if (bot.lane_pending) note.push(h("div.chip.info", { text: t("bot.lane_requested"), style: { marginTop: "4px" } }));
     const sig = note.map((n) => n.outerHTML).join("");
     if (sig !== this.noteSig) { this.noteSig = sig; this.note.replaceChildren(...note); }
@@ -591,6 +613,7 @@ class BotCard {
       this.sendThrottle(store.meta?.safety?.confirm_throttle_above ?? 12);
     }
     toggle(this.unlock, "on", on);
+    setText(this.unlock, on ? t("bot.unlock_on") : t("bot.unlock_off"));
   }
 
   openProfile() {
@@ -604,7 +627,7 @@ function profileText(p) {
   if (p.kind === "constant") return `${label} · ${p.value}`;
   if (p.kind === "target") return `${label} · ${lapTime(p.target_ms)}`;
   if (p.kind === "rival") return `${label} · #${(p.rival_slot ?? 0) + 1} ${p.margin_pct >= 0 ? "+" : ""}${t("fmt.pct", { v: p.margin_pct })}`;
-  if (p.kind === "corners") return `${label} · ${p.a_lat} m/s²`;
+  if (p.kind === "corners") return `${label} · ${p.a_lat} m/s² · ${t("bot.cap", { n: p.cap })}`;
   return label;
 }
 
@@ -622,10 +645,11 @@ function openProfileDrawer(slot, current) {
     renderForm();
   });
   seg.el.classList.add("full", "wrap");
+  seg.el.setAttribute("aria-label", t("profile.drawer", { n: slot + 1 }));
 
   const num = (label, key, opts) => {
     const v = values[kind];
-    const st = Stepper({ value: v[key], ...opts, onChange: (x) => (v[key] = x) });
+    const st = Stepper({ value: v[key], ...opts, label, onChange: (x) => (v[key] = x) });
     return h("label.field", {}, h("span", { text: label }), st.el);
   };
   const seconds = (label, key) => {

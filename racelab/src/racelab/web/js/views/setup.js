@@ -213,7 +213,7 @@ export class SetupView {
     const f = (this.fields = {});
 
     // laps
-    this.lapsStepper = Stepper({ value: this.v.laps, min: 1, max: 999, onChange: (x) => this.setValue("laps", x) });
+    this.lapsStepper = Stepper({ label: t("setup.laps"), value: this.v.laps, min: 1, max: 999, onChange: (x) => this.setValue("laps", x) });
     f.laps = group(t("setup.laps"), h("div.control", {}, this.lapsStepper.el, h("span.dim", { text: t("setup.unit_laps") })));
 
     // duration (optional for practice)
@@ -224,9 +224,10 @@ export class SetupView {
         this.v.limited = val === "fixed";
         this.paintDuration();
         this.applyParams();
-      });
+      }, t("setup.duration"));
     this.durMode.buttons.forEach((b) => b.setAttribute("aria-pressed", "false"));
     this.durStepper = Stepper({
+      label: t("setup.duration"),
       value: this.v.minutes ?? DEFAULT_MINUTES.practice, min: 1, max: 600,
       onChange: (x) => { this.v.minutes = x; this.applyParams(); },
     });
@@ -234,11 +235,11 @@ export class SetupView {
     f.duration = group(t("setup.duration"), h("div.stack", {}, this.durMode.el, this.durControl));
 
     // elimination
-    this.elimStepper = Stepper({ value: this.v.elim_every, min: 1, max: 20, onChange: (x) => this.setValue("elim_every", x) });
+    this.elimStepper = Stepper({ label: t("setup.elim"), value: this.v.elim_every, min: 1, max: 20, onChange: (x) => this.setValue("elim_every", x) });
     f.elim = group(t("setup.elim"), h("div.control", {}, this.elimStepper.el, h("span.dim", { text: t("setup.unit_leader_laps") })));
 
     // training
-    this.epiStepper = Stepper({ value: this.v.episode_laps, min: 1, max: 100, onChange: (x) => this.setValue("episode_laps", x) });
+    this.epiStepper = Stepper({ label: t("setup.episode"), value: this.v.episode_laps, min: 1, max: 100, onChange: (x) => this.setValue("episode_laps", x) });
     f.episode = group(t("setup.episode"), h("div.control", {}, this.epiStepper.el, h("span.dim", { text: t("setup.unit_laps") })));
 
     // against the bot
@@ -246,7 +247,7 @@ export class SetupView {
       onchange: () => { this.v.rival_slot = parseInt(this.rivalSelect.value, 10); this.applyParams(); },
     });
     f.rival = h("label.field", {}, h("span", { text: t("setup.rival_pace") }), this.rivalSelect);
-    this.marginStepper = Stepper({ value: this.v.rival_margin_pct, min: -20, max: 30, onChange: (x) => this.setValue("rival_margin_pct", x) });
+    this.marginStepper = Stepper({ label: t("setup.margin"), value: this.v.rival_margin_pct, min: -20, max: 30, onChange: (x) => this.setValue("rival_margin_pct", x) });
     f.margin = group(t("setup.margin"), h("div.control", {}, this.marginStepper.el, h("span.dim", { text: t("setup.unit_margin") })));
 
     // fuel
