@@ -244,6 +244,61 @@ def test_status_and_the_page(tmp_path):
     run(sv, body)
 
 
+def test_status_exposes_the_racelab_page_and_the_defaults_the_page_shows(tmp_path):
+    sv = make_serve(tmp_path)
+
+    async def body(client, post, until):
+        st = await (await client.get("/status")).json()
+        assert st["racelab"]["ui_url"] == "http://127.0.0.1:1/"  # from --racelab-url ws://127.0.0.1:1/ws
+        assert st["defaults"] == {"map_throttle": sv_mod.MAP_THROTTLE, "identify_throttle": 4}
+        assert st["error_code"] is None
+
+    run(sv, body)
+    ui = sv_mod.racelab_ui_url
+    assert ui("wss://pit.example:9/ws") == "https://pit.example:9/" and ui("ws://[::1]:8130/ws") == "http://[::1]:8130/"
+    assert ui("ws://user:pw@host:1/ws") == "http://host:1/" and ui("http://host/") is None and ui(None) is None and ui("") is None
+
+
+def test_known_refusals_get_a_code_and_every_code_has_both_translations():
+    code = sv_mod.error_code
+    assert code("E-STOP is on: clear it by hand (never from software), then run the roll call again") == "estop"
+    assert code("a session is 'running': the roll call only runs between sessions") == "session"
+    assert code("a session is in state 'grid': end it first") == "session"
+    assert code("the CU link is 'down': the roll call cannot move the cars") == "link"
+    assert code("the car was taken from us (OpError: x): E-STOP or lost link? Not claiming it again") == "link"
+    assert code("CU not connected") == "notconn" and code("[Errno 61] refused\nStart RaceLab (`racelab`) first") == "notconn"
+    assert code("RaceLab refused: the virtual CU cannot do this") == "virtual"
+    assert code("the car never crossed the finish line: is the session running and the slot right?") is None
+    assert code(None) is None and code("") is None
+    m = sv_mod.messages()
+    assert {c for _, c in sv_mod.ERROR_CODES} <= {k[4:] for k in m["en"] if k.startswith("err_")}
+
+
+def test_the_error_keeps_the_message_only_and_the_class_goes_to_the_log(tmp_path, monkeypatch):
+    r = sv_mod.Runner()
+
+    def boom(ctx):
+        raise KeyError("oops")
+
+    r.start("record", boom, sv_mod.Ctx(say=r.say, interactive=False), lambda res: None)
+    r.join(5)
+    assert r.error == "'oops'" and any("KeyError" in line for line in r.lines)
+    assert r.snapshot()["error_code"] is None
+
+
+def test_identify_and_run_are_refused_without_a_map(tmp_path):
+    sv = make_serve(tmp_path)
+
+    async def body(client, post, until):
+        await open_camera(post)
+        for path, req in (("/api/identify", {"confirm": True, "slots": [0]}), ("/api/run", {"slots": []})):
+            code, j = await post(path, req)
+            assert code == 400 and "no map" in j["error"], (path, code, j)
+        assert not sv.runner.busy
+
+    run(sv, body)
+
+
 def test_every_post_needs_the_token_a_json_body_and_a_same_site_loopback_request(tmp_path):
     sv = make_serve(tmp_path)
 
@@ -611,6 +666,19 @@ def test_identify_with_a_fake_link_names_the_parked_cars_or_reports_them(tmp_pat
 
 
 # ----------------------------------------------------------------------------- the page itself
+
+def test_the_stop_bar_comes_after_the_grid_and_holds_the_status_and_the_error():
+    html = sv_mod.page("NONCE", "en")
+    grid_end, bar, dlg = html.index("</section>\n</div>\n\n<div class=\"stopbar\">"), html.index('<div class="stopbar">'), html.index('<dialog id="dlg"')
+    assert html.index('<div class="grid">') < grid_end < bar < dlg
+    bar_html = html[bar:dlg]
+    assert all(f'id="{i}"' in bar_html for i in ("stop", "rllink", "statusline", "error"))
+    assert html.count('id="statusline"') == 1 and html.count('id="error"') == 1 and html.count('id="rllink"') == 1
+    assert "viewport-fit=cover" in html and "safe-area-inset-bottom" in html
+    cards = [html.index(f'aria-labelledby="{h}"') for h in ("h-cam", "h-mapact", "h-id", "h-run", "h-rec", "h-status")]
+    assert cards == sorted(cards)  # first-time setup order: camera, map, roll call, run, record, status
+    assert html.index('id="marker"') > html.index('aria-labelledby="h-mapact"')  # the marker size sits in the Map card
+
 
 def test_both_languages_have_the_same_messages_and_the_page_is_self_contained():
     m = sv_mod.messages()

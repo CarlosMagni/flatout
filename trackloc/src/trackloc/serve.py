@@ -55,6 +55,26 @@ CARD_NAME = "Camera (trackloc)"
 TOKEN_HEADER = "X-Trackloc-Token"
 STATUS_OF = {"record": "recording", "map": "mapping", "identify": "identifying", "run": "running"}
 STOP_JOIN_S = 20.0
+MAP_THROTTLE = 4  # the page's default Map throttle (also what the confirmation shows when the field is empty)
+# refusals of the command line / RaceLab, matched on their text (checked in order) -> the page's `err_<code>` message
+ERROR_CODES = (("taken from us", "link"), ("e-stop is on", "estop"), ("virtual cu", "virtual"), ("a session is", "session"),
+               ("not connected", "notconn"), ("start racelab", "notconn"), ("link", "link"))
+
+
+def error_code(text: str | None) -> str | None:
+    low = (text or "").lower()
+    return next((code for needle, code in ERROR_CODES if needle in low), None)
+
+
+def racelab_ui_url(ws_url: str | None) -> str | None:
+    """RaceLab's page from its WebSocket URL: ws://host:port/ws -> http://host:port/ (wss -> https). None if not a ws URL."""
+    try:
+        parts = urlsplit(ws_url or "")
+    except ValueError:
+        return None
+    scheme = {"ws": "http", "wss": "https"}.get(parts.scheme.lower())
+    host = parts.netloc.rsplit("@", 1)[-1]
+    return f"{scheme}://{host}/" if scheme and host else None
 
 
 class BadRequest(Exception):
@@ -108,8 +128,18 @@ UI: dict[str, dict[str, str]] = {
         "run_identify": "Roll call first (moves each car a little)",
         "run_start": "Start the run",
         "stop": "STOP",
-        "stop_hint": "Ends the current action and hands the cars back. It is not the emergency stop: that stays in RaceLab.",
-        "confirm_map": "A car will run at throttle {n}/15: keep a hand on STOP in RaceLab.",
+        "stop_hint": "Ends the current action. Not the emergency stop: that is in RaceLab.",
+        "rl_open": "Open RaceLab (emergency stop)",
+        "need_camera": "Open the camera first",
+        "need_map": "Map the track first",
+        "pick_cars": "Tick at least one car first.",
+        "cam_loading": "loading...",
+        "err_estop": "E-STOP is on in RaceLab: clear it by hand there, then try again.",
+        "err_virtual": "RaceLab is driving a virtual CU: Map, roll call and Run need the real CU.",
+        "err_session": "A session is running in RaceLab: end it, then try again.",
+        "err_link": "The link to the CU is down, or the car was taken from us (E-STOP?): check RaceLab.",
+        "err_notconn": "RaceLab is not reachable or its CU is not connected: start RaceLab and connect the CU.",
+        "confirm_map": "Car {slot} will run at {n}/15: keep a hand on STOP in RaceLab.",
         "confirm_empty": "The empty track is captured {s} s after you start: remove every car and keep your hands out of the view.",
         "confirm_identify": "Each selected car will be pulsed at throttle {n}/15 for half a second: keep a hand on STOP in RaceLab.",
         "confirm_ok": "Start",
@@ -187,8 +217,18 @@ UI: dict[str, dict[str, str]] = {
         "run_identify": "Appel d'abord (déplace un peu chaque voiture)",
         "run_start": "Lancer le suivi",
         "stop": "STOP",
-        "stop_hint": "Termine l'action en cours et rend les voitures. Ce n'est pas l'arrêt d'urgence : il reste dans RaceLab.",
-        "confirm_map": "Une voiture va rouler aux gaz {n}/15 : gardez une main sur STOP dans RaceLab.",
+        "stop_hint": "Termine l'action en cours. Pas l'arrêt d'urgence : il est dans RaceLab.",
+        "rl_open": "Ouvrir RaceLab (arrêt d'urgence)",
+        "need_camera": "Ouvrez d'abord la caméra",
+        "need_map": "Cartographiez d'abord la piste",
+        "pick_cars": "Cochez d'abord au moins une voiture.",
+        "cam_loading": "chargement...",
+        "err_estop": "L'arrêt d'urgence est actif dans RaceLab : levez-le à la main là-bas, puis réessayez.",
+        "err_virtual": "RaceLab pilote une centrale virtuelle : Carte, appel et Lancer ont besoin de la vraie centrale.",
+        "err_session": "Une session est en cours dans RaceLab : terminez-la, puis réessayez.",
+        "err_link": "Le lien avec la centrale est coupé, ou la voiture nous a été reprise (arrêt d'urgence ?) : vérifiez RaceLab.",
+        "err_notconn": "RaceLab est injoignable ou sa centrale n'est pas connectée : démarrez RaceLab et connectez la centrale.",
+        "confirm_map": "La voiture {slot} va rouler à {n}/15 : gardez une main sur STOP dans RaceLab.",
         "confirm_empty": "La piste vide est capturée {s} s après le départ : retirez toutes les voitures et gardez les mains hors du champ.",
         "confirm_identify": "Chaque voiture choisie recevra une impulsion aux gaz {n}/15 pendant une demi-seconde : gardez une main sur STOP dans RaceLab.",
         "confirm_ok": "Démarrer",
@@ -480,8 +520,8 @@ class Runner:
             self.say(f"{type(e).__name__}: {e}")
         except Exception as e:  # a bug: say it, still end cleanly (the actions released the car in their finally)
             log.exception("action %s", name)
-            error = f"{type(e).__name__}: {e}"
-            self.say(error)
+            error = str(e)
+            self.say(f"{type(e).__name__}: {e}")
         finally:
             with self._lock:
                 self.error = error
@@ -510,6 +550,7 @@ class Runner:
     def snapshot(self) -> dict[str, Any]:
         return {"status": self.status, "action": self.name, "since": self.started if self.name else None,
                 "stopping": self.stopping, "info": dict(self.info) if self.name else {}, "error": self.error,
+                "error_code": error_code(self.error),
                 "log": list(self.lines)[-14:], "last": self.last}
 
 
@@ -640,6 +681,7 @@ class Serve:
         self.latency: dict[str, Any] | None = None
         self.opening = False
         self.camera_error: str | None = None
+        self.roll_throttle = self._args("identify", map="-").throttle  # what the roll call pulses at (the CLI default)
 
     def ui_url(self) -> str:
         return f"http://127.0.0.1:{self.port}/?k={self.token}"
@@ -706,7 +748,7 @@ class Serve:
     def _start_map(self, body: dict[str, Any]) -> None:
         _need_confirm(body)
         slot = _number(body, "slot", 0, 5, integer=True)
-        throttle = _number(body, "throttle", 1, UI_THROTTLE_MAX, 4, integer=True)
+        throttle = _number(body, "throttle", 1, UI_THROTTLE_MAX, MAP_THROTTLE, integer=True)
         lanes = _choice(body, "lanes", (1, 2), 2)
         background = _choice(body, "background", ("median", "empty"), "median")
         marker_mm = _number(body, "marker_mm", 20, 500, 150)
@@ -752,7 +794,8 @@ class Serve:
         r = self.runner.snapshot()
         return {**r, "camera": {"open": self.camera.is_open, "spec": self.camera.spec, "info": self.camera.info,
                                 "opening": self.opening, "error": self.camera_error},
-                "racelab": {"url": self.args.racelab_url, "card": self.card.state},
+                "racelab": {"url": self.args.racelab_url, "ui_url": racelab_ui_url(self.args.racelab_url), "card": self.card.state},
+                "defaults": {"map_throttle": MAP_THROTTLE, "identify_throttle": self.roll_throttle},
                 "map": self.map_summary, "latency": self.latency, "preview": self.preview.status()}
 
     def shutdown(self) -> None:
@@ -769,7 +812,7 @@ PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>trackloc</title>
 <style nonce="__NONCE__">
@@ -806,7 +849,13 @@ ul.list li.ok { color:var(--ok); } ul.list li.warn { color:var(--warn); } ul.lis
 .err { color:var(--bad); font-weight:600; margin:8px 0; }
 pre { margin:8px 0 0; padding:8px; background:var(--bg); border:1px solid var(--line); border-radius:8px; max-height:14em; overflow:auto; font-size:.85rem; white-space:pre-wrap; }
 .statusline { font-size:1.1rem; font-weight:600; margin:0 0 4px; }
-.stopbar { position:sticky; bottom:0; padding:8px 0; background:var(--bg); display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:16px; }
+.stopbar { position:sticky; bottom:0; margin:16px -16px 0; padding:8px 16px max(8px, env(safe-area-inset-bottom)); background:var(--bg); border-top:1px solid var(--line); display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
+.stopbar .statusline, .stopbar .err { flex-basis:100%; margin:0; }
+.stopbar .err { max-height:6em; overflow:auto; }
+.stopbar p:empty { display:none; }
+a.rllink { min-height:44px; display:inline-flex; align-items:center; padding:0 14px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--accent); text-decoration:none; font-weight:600; }
+a.rllink[hidden] { display:none; }
+@media (max-width:480px) { .stopbar a.rllink { flex:1; justify-content:center; text-align:center; line-height:1.2; padding:4px 10px; } }
 button.stop { background:var(--bad); color:#fff; border-color:var(--bad); font-weight:700; font-size:1.1rem; min-height:56px; min-width:140px; }
 dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--fg); max-width:30em; padding:20px; }
 dialog::backdrop { background:rgba(0,0,0,.5); }
@@ -817,6 +866,7 @@ dialog .row { justify-content:flex-end; }
 <main>
 <header>
   <h1 id="title"></h1>
+  <a id="rllink-h" class="rllink" target="_blank" rel="noopener" hidden data-i="rl_open"></a>
   <div class="lang" role="group" id="langs"><button type="button" data-lang="en" aria-pressed="false">EN</button> <button type="button" data-lang="fr" aria-pressed="false">FR</button></div>
 </header>
 <p class="lead" data-i="lead"></p>
@@ -825,29 +875,7 @@ dialog .row { justify-content:flex-end; }
 <div class="view"><img id="cam" src="/stream" alt=""></div>
 <ul class="list" id="aim" aria-live="polite"></ul>
 
-<div class="stopbar">
-  <button type="button" class="btn stop" id="stop" data-i="stop"></button>
-  <span class="note" data-i="stop_hint"></span>
-</div>
-
 <div class="grid">
-  <section class="card" aria-labelledby="h-status">
-    <h2 id="h-status" data-i="status_title"></h2>
-    <p class="statusline" id="statusline"></p>
-    <p class="note" id="phase"></p>
-    <p class="err" id="error" role="alert"></p>
-    <p class="note" id="last"></p>
-    <p class="note" id="rl"></p>
-    <pre id="log" aria-label="log"></pre>
-  </section>
-
-  <section class="card" aria-labelledby="h-map">
-    <h2 id="h-map" data-i="map_title2"></h2>
-    <ul class="list" id="mapsum"></ul>
-    <p class="note" id="latsum"></p>
-    <button type="button" class="btn" id="uselat" hidden></button>
-  </section>
-
   <section class="card" aria-labelledby="h-cam">
     <h2 id="h-cam" data-i="cam_title"></h2>
     <div class="row">
@@ -861,10 +889,37 @@ dialog .row { justify-content:flex-end; }
     </div>
     <p class="note" id="camstate"></p>
     <div class="row">
-      <label class="f"><span data-i="marker_mm"></span><input id="marker" type="number" min="20" max="500" step="1" value="150"></label>
       <label class="f"><span data-i="latency_ms"></span><input id="latency" type="number" min="0" max="1000" step="1" value="0"></label>
     </div>
-    <p class="note"><span data-i="marker_hint"></span> <span data-i="latency_hint"></span></p>
+    <p class="note" data-i="latency_hint"></p>
+  </section>
+
+  <section class="card" aria-labelledby="h-mapact">
+    <h2 id="h-mapact" data-i="map_title"></h2>
+    <div class="row">
+      <label class="f"><span data-i="marker_mm"></span><input id="marker" type="number" min="20" max="500" step="1" value="150"></label>
+      <label class="f"><span data-i="slot"></span><select id="mapslot"></select></label>
+      <label class="f"><span data-i="throttle"></span><input id="throttle" type="number" min="1" max="8" step="1" value="4"></label>
+      <label class="f"><span data-i="lanes"></span><select id="lanes"><option value="2" data-i="lanes_2"></option><option value="1" data-i="lanes_1"></option></select></label>
+      <label class="f"><span data-i="background"></span><select id="background"><option value="median" data-i="bg_median"></option><option value="empty" data-i="bg_empty"></option></select></label>
+    </div>
+    <p class="note" data-i="marker_hint"></p>
+    <button type="button" class="btn primary act" id="map" data-i="map_start"></button>
+  </section>
+
+  <section class="card" aria-labelledby="h-id">
+    <h2 id="h-id" data-i="id_title"></h2>
+    <fieldset><legend data-i="slots"></legend><div class="row" id="idslots"></div></fieldset>
+    <button type="button" class="btn primary act" id="identify" data-i="id_start"></button>
+    <p class="note" id="idnote" aria-live="polite"></p>
+  </section>
+
+  <section class="card" aria-labelledby="h-run">
+    <h2 id="h-run" data-i="run_title"></h2>
+    <fieldset><legend data-i="slots"></legend><div class="row" id="runslots"></div></fieldset>
+    <label class="chk"><input type="checkbox" id="runid"><span data-i="run_identify"></span></label>
+    <button type="button" class="btn primary act" id="run" data-i="run_start"></button>
+    <p class="note" id="runnote" aria-live="polite"></p>
   </section>
 
   <section class="card" aria-labelledby="h-rec">
@@ -875,29 +930,28 @@ dialog .row { justify-content:flex-end; }
     </div>
   </section>
 
-  <section class="card" aria-labelledby="h-mapact">
-    <h2 id="h-mapact" data-i="map_title"></h2>
-    <div class="row">
-      <label class="f"><span data-i="slot"></span><select id="mapslot"></select></label>
-      <label class="f"><span data-i="throttle"></span><input id="throttle" type="number" min="1" max="8" step="1" value="4"></label>
-      <label class="f"><span data-i="lanes"></span><select id="lanes"><option value="2" data-i="lanes_2"></option><option value="1" data-i="lanes_1"></option></select></label>
-      <label class="f"><span data-i="background"></span><select id="background"><option value="median" data-i="bg_median"></option><option value="empty" data-i="bg_empty"></option></select></label>
-    </div>
-    <button type="button" class="btn primary act" id="map" data-i="map_start"></button>
+  <section class="card" aria-labelledby="h-status">
+    <h2 id="h-status" data-i="status_title"></h2>
+    <p class="note" id="phase"></p>
+    <p class="note" id="last"></p>
+    <p class="note" id="rl"></p>
+    <pre id="log" aria-label="log"></pre>
   </section>
 
-  <section class="card" aria-labelledby="h-id">
-    <h2 id="h-id" data-i="id_title"></h2>
-    <fieldset><legend data-i="slots"></legend><div class="row" id="idslots"></div></fieldset>
-    <button type="button" class="btn primary act" id="identify" data-i="id_start"></button>
+  <section class="card" aria-labelledby="h-map">
+    <h2 id="h-map" data-i="map_title2"></h2>
+    <ul class="list" id="mapsum"></ul>
+    <p class="note" id="latsum"></p>
+    <button type="button" class="btn" id="uselat" hidden></button>
   </section>
+</div>
 
-  <section class="card" aria-labelledby="h-run">
-    <h2 id="h-run" data-i="run_title"></h2>
-    <fieldset><legend data-i="slots"></legend><div class="row" id="runslots"></div></fieldset>
-    <label class="chk"><input type="checkbox" id="runid"><span data-i="run_identify"></span></label>
-    <button type="button" class="btn primary act" id="run" data-i="run_start"></button>
-  </section>
+<div class="stopbar">
+  <button type="button" class="btn stop" id="stop" data-i="stop"></button>
+  <a id="rllink" class="rllink" target="_blank" rel="noopener" hidden data-i="rl_open"></a>
+  <span class="note" data-i="stop_hint"></span>
+  <p class="statusline" id="statusline"></p>
+  <p class="err" id="error" role="alert"></p>
 </div>
 
 <dialog id="dlg" aria-labelledby="dlgtext">
@@ -909,11 +963,14 @@ dialog .row { justify-content:flex-end; }
 "use strict";
 const MSG = __MESSAGES__;
 const DEFAULT_LANG = "__LANG__";
-const K = new URLSearchParams(location.search).get("k") || "";
+const Q = new URLSearchParams(location.search);
+const K = Q.get("k") || "";
 const $ = (id) => document.getElementById(id);
 const fmt = (s, o) => String(s).replace(/\\{(\\w+)\\}/g, (_, k) => (o && o[k] !== undefined ? o[k] : ""));
-let lang = DEFAULT_LANG, last = null, lastOk = 0, devices = [], busy = false;
-try { lang = localStorage.getItem("trackloc-lang") || lang; } catch (e) { /* private window */ }
+let lang = DEFAULT_LANG, last = null, lastOk = 0, devices = null, devKeep = "", busy = false;
+const qLang = Q.get("lang");  // RaceLab's Open link: ?lang= wins over the remembered choice
+if (qLang === "en" || qLang === "fr") lang = qLang;
+else { try { lang = localStorage.getItem("trackloc-lang") || lang; } catch (e) { /* private window */ } }
 if (!MSG[lang]) lang = "en";
 const t = (k, o) => fmt(MSG[lang][k] || k, o);
 
@@ -937,6 +994,7 @@ function slotBoxes(box, name) {
 }
 slotBoxes($("idslots"), "idslot"); slotBoxes($("runslots"), "runslot");
 for (let i = 1; i <= 6; i++) { const o = document.createElement("option"); o.value = String(i - 1); o.textContent = String(i); $("mapslot").append(o); }
+document.querySelectorAll("#idslots, #runslots").forEach((b) => b.addEventListener("change", () => { if (localKey === "pick_cars") showError(""); }));
 const picked = (name) => [...document.querySelectorAll("input[name=" + name + "]:checked")].map((c) => Number(c.value));
 
 async function post(path, body) {
@@ -947,8 +1005,14 @@ async function post(path, body) {
     showError(""); return j;
   } catch (e) { showError(t("lost")); return null; }
 }
-let localError = "";
-function showError(text) { localError = text; render(); }
+let localError = "", localKey = "";  // a page-side error is a message key (so it follows the language) or server text
+function showError(text, key) { localError = text; localKey = key || ""; render(); }
+function errText(s) {
+  if (localKey) return t(localKey);
+  if (localError) return localError;
+  if (!s) return "";
+  return s.error_code && MSG[lang]["err_" + s.error_code] ? t("err_" + s.error_code) : (s.error || "");
+}
 
 function confirmDialog(text) {
   const d = $("dlg");
@@ -962,22 +1026,31 @@ function confirmDialog(text) {
 }
 
 async function refreshDevices() {
-  try { const r = await fetch("/devices", { cache: "no-store" }); devices = r.ok ? (await r.json()).devices : []; } catch (e) { devices = []; }
-  renderDevices();
+  devKeep = $("device").value; devices = null; $("camrefresh").disabled = true; renderDevices();  // null = loading
+  try { const r = await fetch("/devices", { cache: "no-store" }); devices = r.ok ? (await r.json()).devices || [] : []; } catch (e) { devices = []; }
+  $("camrefresh").disabled = false; renderDevices(); devKeep = "";
 }
 function renderDevices() {
-  const sel = $("device"), keep = sel.value; sel.textContent = "";
-  const none = document.createElement("option"); none.value = ""; none.textContent = devices.length ? t("cam_none") : t("cam_nodev"); sel.append(none);
-  devices.forEach((d) => { const o = document.createElement("option"); o.value = String(d.index); o.textContent = "[" + d.index + "] " + d.name; sel.append(o); });
-  sel.value = keep;
+  const sel = $("device"), keep = sel.value || devKeep; sel.textContent = "";
+  const none = document.createElement("option"); none.value = "";
+  none.textContent = devices === null ? t("cam_loading") : devices.length ? t("cam_none") : t("cam_nodev"); sel.append(none);
+  (devices || []).forEach((d) => { const o = document.createElement("option"); o.value = String(d.index); o.textContent = "[" + d.index + "] " + d.name; sel.append(o); });
+  sel.value = keep; if (sel.value !== keep) sel.value = "";
+  sel.disabled = devices === null;
 }
 
 function render() {
   const el = $("statusline"), s = last;
-  document.querySelectorAll(".act").forEach((b) => { b.disabled = busy || !(s && s.camera.open); });
+  const noCam = !(s && s.camera.open), noMap = !(s && s.map);
+  document.querySelectorAll(".act").forEach((b) => { b.disabled = busy || noCam; });
+  $("identify").disabled = $("run").disabled = busy || noCam || noMap;  // roll call and Run need a map
+  const why = !s ? "" : noCam ? "need_camera" : noMap ? "need_map" : "";
+  $("idnote").textContent = $("runnote").textContent = why ? t(why) : "";
   $("camopen").disabled = busy; $("camclose").disabled = busy;
   $("notoken").hidden = !!K;
-  if (!s) { el.textContent = ""; $("error").textContent = localError; return; }
+  const href = (s && s.racelab && s.racelab.ui_url) || "";
+  document.querySelectorAll(".rllink").forEach((a) => { const ok = /^https?:/.test(href); a.hidden = !ok; if (ok && a.getAttribute("href") !== href) a.href = href; });
+  if (!s) { el.textContent = ""; $("error").textContent = errText(null); return; }
   if (Date.now() - lastOk > 4000) { el.textContent = t("lost"); }
   else {
     const bits = [t("st_" + s.status)];
@@ -989,7 +1062,7 @@ function render() {
   }
   const ph = s.info && s.info.phase;
   $("phase").textContent = s.action && ph ? t("phase_" + ph) : "";
-  $("error").textContent = localError || s.error || "";
+  $("error").textContent = errText(s);
   const l = s.last;
   $("last").textContent = !s.action && l ? t(l.stopped ? "last_stopped" : "last_ok", { action: l.action }) + (l.summary && l.summary.results ? " - " + l.summary.results.map((r) => t(r.identified ? "id_ok" : "id_ko", { slot: r.slot + 1, note: r.note })).join("; ") : "") : "";
   $("rl").textContent = t("racelab") + ": " + t(s.racelab.card === "ok" ? "rl_ok" : s.racelab.card === "old" ? "rl_old" : "rl_down");
@@ -1044,24 +1117,27 @@ $("camopen").addEventListener("click", async () => {
 $("camclose").addEventListener("click", async () => { await post("/api/camera", { camera: null }); poll(true); });
 $("uselat").addEventListener("click", () => { $("latency").value = $("uselat").dataset.ms; });
 $("stop").addEventListener("click", async () => { await post("/api/stop", {}); poll(true); });
+const rollN = () => (last && last.defaults ? last.defaults.identify_throttle : "");  // from /status, never hard-coded
 const num = (id) => (document.getElementById(id).value === "" ? null : Number(document.getElementById(id).value));
 $("rec").addEventListener("click", async () => { await post("/api/record", { duration: num("duration") }); poll(true); });
 $("map").addEventListener("click", async () => {
-  const n = num("throttle"), empty = $("background").value === "empty";
-  const text = t("confirm_map", { n }) + (empty ? " " + t("confirm_empty", { s: 5 }) : "");
+  const n = num("throttle") ?? (last && last.defaults ? last.defaults.map_throttle : ""), empty = $("background").value === "empty";
+  const text = t("confirm_map", { n, slot: Number($("mapslot").value) + 1 }) + (empty ? " " + t("confirm_empty", { s: 5 }) : "");
   if (!(await confirmDialog(text))) return;
   await post("/api/map", { confirm: true, slot: Number($("mapslot").value), throttle: n, lanes: Number($("lanes").value),
     background: $("background").value, marker_mm: num("marker"), latency_ms: num("latency") }); poll(true);
 });
 $("identify").addEventListener("click", async () => {
   const slots = picked("idslot");
-  if (!(await confirmDialog(t("confirm_identify", { n: 4 })))) return;
+  if (!slots.length) { showError("", "pick_cars"); return; }
+  if (!(await confirmDialog(t("confirm_identify", { n: rollN() })))) return;
   await post("/api/identify", { confirm: true, slots }); poll(true);
 });
 $("run").addEventListener("click", async () => {
-  const identify = $("runid").checked;
-  if (identify && !(await confirmDialog(t("confirm_identify", { n: 4 })))) return;
-  await post("/api/run", { confirm: identify, identify, slots: picked("runslot"), latency_ms: num("latency") }); poll(true);
+  const identify = $("runid").checked, slots = picked("runslot");
+  if (identify && !slots.length) { showError("", "pick_cars"); return; }
+  if (identify && !(await confirmDialog(t("confirm_identify", { n: rollN() })))) return;
+  await post("/api/run", { confirm: identify, identify, slots, latency_ms: num("latency") }); poll(true);
 });
 let timer = null;
 async function poll(now) {
