@@ -35,7 +35,7 @@ Two tiers:
 | 1. Localisation (`trackloc/`) | done in sim: map ±1 %, ~2 cm visible, 0 identity swaps (synthetic benchmark); CLI + `serve` page, preview, roll call | real camera: frame rate, latency, reflections, lighting; tune from Sunday's recordings |
 | 2. Pilot v1 | `corners` (default) and `mpc` in the brain's pilot registry. Virtual CU, `python racelab/bench_pilots.py`, 20 laps, 0 off everywhere: defaults corners 6.6 s, mpc 7.3 s; `f_max=1.5` corners 5.7 s, mpc 6.2 s; `a_lat=18` corners 5.55 s, mpc (4 iterations, 96 samples, horizon 2.5 s, sigma 0.02, risk 1) 5.8 s | why mpc trails corners at the same grip (suspects: `BRAKE_REACH`, the risk penalty, slow grip learning, lap 1); calibrate `v_max`, `tau_acc`, `tau_brake`, delay, grip on the real car; choose the default |
 | 3. Race brain (rules) | lane and pit planners, manual "pit now" / "change lane" buttons, tested on the virtual CU | real car: does the lane request latch until the next changer? how does the CU refuel? |
-| 4. Strategy v2 (RL) | not started; spec below | the race environment, then the strategist |
+| 4. Strategy v2 (RL) | **started**: `strategist/` (headless env, PPO training, evaluation — see its README) | track randomisation, human-replay opponents, longer training, live use |
 
 The default `a_lat` (10 m/s²) is half the simulator's limit (`A_MAX = 20` in `racelab/sim/track.py`),
 and the default `f_max` (1.2) caps the grip learning: both pilots are cautious on purpose until the

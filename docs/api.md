@@ -60,6 +60,7 @@ is `hello.client`),
 | `bot.lane` | `slot` | one-shot lane change |
 | `bot.profile` | `slot`, `profile: {kind, …}` | autopilot profile (Auto driver): `constant`, `target`, `rival`, `map`, `corners` or `brain` ([race brain](#race-brain-profile-brain)); the parameters and defaults of each kind are in `meta.profiles` |
 | `bot.brain` | `slot`, `request: pit\|lane` | race brain only (refused otherwise): one-shot test request, `pit` = pit at the next pit entry, `lane` = change lane at the next changer; timed by the brain like its own moves, dropped by a new session, an E-STOP or a reconnection |
+| `bot.params` | `slot`, `params: {risk}` | race brain only: live parameters applied in place (the MPC's `risk`, 0..1); everything learned is kept, unknown keys are refused |
 | `estop` / `estop.clear` | | emergency stop: throttle 0 on every bot |
 | `mode.set` | `mode: classic\|advanced` | outside a session only |
 | `car.program` | `slot`, `speed?`, `brake?`, `fuel?` (0..15) | program a car (outside a session) |

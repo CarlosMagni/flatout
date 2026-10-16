@@ -19,3 +19,4 @@ internal/
 
 # --- firmware build output (firmware/build.py)
 firmware/build/
+strategist/out/
