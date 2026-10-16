@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import WSMsgType, web
 
-from ..app import OpError, RaceLabApp
+from ..app import LONG_OPS, OpError, RaceLabApp
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +193,8 @@ def create_web_app(app: RaceLabApp) -> web.Application:
         if not isinstance(args, dict):
             return _json({"ok": False, "error": "the body must be a JSON object"}, 400)
         client = request.headers.get("X-Agent", "rest")
+        if op.startswith("connector."):  # a card is removed when its connection closes: REST has none
+            return _json({"ok": False, "error": "connector cards need a WebSocket connection (/ws)"}, 400)
         try:
             result = await app.handle(op, args, client)
         except OpError as e:
@@ -217,6 +219,21 @@ def create_web_app(app: RaceLabApp) -> web.Application:
         pump = asyncio.create_task(client.pump())
         await ws.send_json({"type": "hello", "client": name, "meta": app.meta(),
                             "state": app.snapshot(), "log": list(app.log)})
+        background: set[asyncio.Task] = set()
+
+        async def answer(rid, op: str, req: dict) -> None:
+            try:
+                result = await app.handle(op, req, name)
+                reply = {"type": "reply", "id": rid, "ok": True, "result": result}
+            except OpError as e:
+                reply = {"type": "reply", "id": rid, "ok": False, "error": str(e)}
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("op %s", op)
+                reply = {"type": "reply", "id": rid, "ok": False, "error": "internal error"}
+            client.push(reply)
+
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -241,16 +258,18 @@ def create_web_app(app: RaceLabApp) -> web.Application:
                         unsubscribe.pop()()
                     client.push({"type": "reply", "id": rid, "ok": True, "result": None})
                     continue
-                try:
-                    result = await app.handle(str(op), req, name)
-                    reply = {"type": "reply", "id": rid, "ok": True, "result": result}
-                except OpError as e:
-                    reply = {"type": "reply", "id": rid, "ok": False, "error": str(e)}
-                except Exception:
-                    logger.exception("op %s", op)
-                    reply = {"type": "reply", "id": rid, "ok": False, "error": "internal error"}
-                client.push(reply)
+                if str(op) in LONG_OPS:  # answered in the background: STOP must not wait behind it
+                    task = asyncio.create_task(answer(rid, str(op), req))
+                    background.add(task)
+                    task.add_done_callback(background.discard)
+                else:
+                    await answer(rid, str(op), req)
         finally:
+            # a client that goes away mid-test: the test's own `finally` zeroes and releases the slot
+            for task in list(background):
+                task.cancel()
+            if background:
+                await asyncio.gather(*background, return_exceptions=True)
             for unsub in unsubscribe:
                 unsub()
             pump.cancel()

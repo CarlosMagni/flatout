@@ -3,9 +3,10 @@
 import { h, inkOn, setText, toggle, wallTime } from "../dom.js";
 import { LANGUAGES, lang, locale, setLang, t } from "../i18n.js";
 import { onEvent, request, store } from "../store.js";
-import { Segmented, Stepper, Toggle, confirmModal, run, toast } from "../ui/components.js";
+import { Segmented, Stepper, Toggle, confirmModal, copyText, fillConnectors, run, toast } from "../ui/components.js";
 import { FirmwarePanel } from "./firmware.js";
 import { ConnectChooser } from "./connect.js";
+import { HwTestPanel } from "./hwtest.js";
 
 const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 const TRANSPORT = {
@@ -76,24 +77,6 @@ function writeGarage(data) {
   try { localStorage.setItem(GARAGE_KEY, JSON.stringify(data)); } catch { /* storage unavailable */ }
 }
 
-async function copyText(text, button) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const area = h("textarea", { "aria-hidden": "true", tabindex: -1 });
-    area.value = text;
-    Object.assign(area.style, { position: "fixed", opacity: "0", pointerEvents: "none" });
-    document.body.append(area);
-    area.select();
-    try { document.execCommand("copy"); } catch { /* nothing to do */ }
-    area.remove();
-  }
-  const before = button.textContent;
-  button.textContent = t("common.copied");
-  clearTimeout(button._t);
-  button._t = setTimeout(() => { button.textContent = before; }, 1400);
-}
-
 // readable display of a raw frame (control bytes escaped)
 const printable = (text) => String(text ?? "").replace(/[^\x20-\x7e]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
 
@@ -117,15 +100,18 @@ export class SystemView {
     this.buildGarage();
     this.buildConsole();
     this.buildApi();
+    this.buildConnectors();
     this.buildLog();
     this.fwPanel = new FirmwarePanel();
+    this.hwPanel = new HwTestPanel();
     this.buildFoot();
 
     root.append(h("div.screen.sys", {},
       h("h1.page", { text: t("nav.system") }),
       h("div.sys-cols", {},
         h("div.sys-col", {}, this.connPanel, this.buttonsPanel, this.consolePanel),
-        h("div.sys-col", {}, this.garagePanel, this.apiPanel, this.fwPanel.el)),
+        h("div.sys-col", {}, this.garagePanel, this.apiPanel, this.connectorsPanel, this.fwPanel.el)),
+      this.hwPanel.el,
       this.logPanel,
       this.foot));
 
@@ -137,6 +123,7 @@ export class SystemView {
 
   destroy() {
     this.off.forEach((f) => f());
+    this.hwPanel.destroy();
     // the raw trace must not keep running once the screen is left
     if (this.tracing) request("subscribe", { raw: false }).catch(() => {});
   }
@@ -149,6 +136,7 @@ export class SystemView {
     this.applyMeta();
     this.renderLog();
     this.fwPanel.hello();
+    this.hwPanel.hello();
   }
 
   // ------------------------------------------------------------ connection
@@ -374,6 +362,14 @@ export class SystemView {
     ]);
   }
 
+  // ------------------------------------------------------------ connectors
+
+  buildConnectors() {
+    this.connectorChips = h("div.connector-chips.left");
+    this.connectorHint = h("p.dim.connector-hint", { text: t("connector.none") });
+    this.connectorsPanel = panel(t("sys.connectors"), [this.connectorChips, this.connectorHint]);
+  }
+
   // ------------------------------------------------------------ log
 
   buildLog() {
@@ -459,6 +455,9 @@ export class SystemView {
     if (this.metaRef !== store.meta) this.applyMeta();
     this.updateLink(state);
     this.fwPanel.update(state);
+    this.hwPanel.update(state);
+    fillConnectors(this.connectorChips, state.connectors);
+    toggle(this.connectorHint, "hidden", !!state.connectors?.length);
 
     const sess = state.session || {};
     const busy = !IDLE_STATES.has(sess.state);

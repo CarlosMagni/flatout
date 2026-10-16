@@ -58,7 +58,7 @@ is `hello.client`),
 | `bot.release` | `slot` | give the slot back to the physical controller |
 | `bot.throttle` | `slot`, `value` | (UI) throttle of the manual driver |
 | `bot.lane` | `slot` | one-shot lane change |
-| `bot.profile` | `slot`, `profile: {kind, …}` | autopilot profile (Auto driver) |
+| `bot.profile` | `slot`, `profile: {kind, …}` | autopilot profile (Auto driver): `constant`, `target`, `rival`, `map` or `corners`; the parameters and defaults of each kind are in `meta.profiles` |
 | `estop` / `estop.clear` | | emergency stop: throttle 0 on every bot |
 | `mode.set` | `mode: classic\|advanced` | outside a session only |
 | `car.program` | `slot`, `speed?`, `brake?`, `fuel?` (0..15) | program a car (outside a session) |
@@ -73,6 +73,7 @@ is `hello.client`),
 | `firmware.abort` | | interrupt the flash (the CU stays in its bootloader: run again with `recovery: true`) |
 | `firmware.status` | | `{state: idle\|running\|verifying\|done\|failed, stage, done, total, eta_s, error, result}` |
 | `track.set` / `track.positions` / `track.clear` | see [Track connector](#track-connector-track-shape--positions) | publish the track shape and car positions |
+| `connector.set` / `connector.clear` | see [Connector card](#connector-card) | show or remove this connection's card in the UI |
 | `tower.reset` | | clear the position tower display |
 | `log` | | the recent log entries (also sent in `hello`) |
 | `console.send` | `frame` | (advanced mode) send one raw frame, e.g. `"?"`; returns the CU's answer. `G`, `E`, `F`, `C` and `B` are refused |
@@ -80,6 +81,20 @@ is `hello.client`),
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |
 | `cu.connect` | `transport: none\|ble\|serial\|sim`, `device?`, `stock?` | switch CU (outside a session): bots are stopped and handed back on the old one first; the choice is remembered |
 | `app.quit` | | stop RaceLab: bots cut and handed back (refused during a firmware update) |
+| `link.bench` | `n?` (1..300, default 100) | hardware test: times `n` round trips of the CU's poll (nothing that can move a car); the `C` acknowledgement time comes from the frames the link sends, plus an idle "every slot on its controller" frame when no bot is active (never a frame that changes a bot). Returns `{n, answered, lost, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms, histogram: [{from_ms, to_ms, count}], c_ack: {n, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms} \| null, duration_ms, timed_out, transport, bot_transport}` (`timed_out`: the wait ended before `n` answers, the partial data is returned). p95 = nearest rank; jitter = mean absolute difference between consecutive samples |
+| `test.pulse` | `slot`, `throttle` (1..6), `ms` (200..2000) | hardware test: the server takes the slot as a bot, holds the throttle for `ms` (clock started once the CU link applied it), then forces 0 and hands the slot back, in a `finally` (also on error, cancellation or a closed client). Out-of-range values are refused, never clamped; `[safety] max_throttle` can only lower the throttle. Returns `{slot, throttle, ms, acked, held_ms, applied_peak, gate, aborted: null\|estop\|link\|session, zeroed, released}` |
+| `test.lane` | `slot`, `throttle?` (1..6, default 3), `ms?` (200..2000, default 2000) | like `test.pulse`, plus one lane request through the usual lane path once the throttle is applied; adds `lane_sent` |
+| `test.handback` | `slot`, `throttle?` (1..6, default 3), `pause_ms?` (1000..2500, default 1500) | C transport only. Holds a throttle, then pauses the `C` heartbeat for `pause_ms` so that the CU's ~750 ms expiry hands the slot back (the app cannot observe it: the tester confirms). Then 0, heartbeat back, hand-back. The pause is a deadline in the link (3 s ceiling): it ends by itself, on E-STOP, on link loss and on any error, and when it ends by itself the bots are zeroed, never resumed. Refused unless every slot is free of bots. Returns `{slot, throttle, pause_ms, paused_ms, acked, aborted, zeroed, released}` |
+| `test.report` | `report: {…}` (object, 200 kB max) | saves the report as `<data dir>/hardware-tests/hwtest-<date>.json` (name chosen by the server) after adding a `server` section (version, link, safety settings). Returns `{name, path, report}` |
+
+The `test.*` ops are refused (error reply) during a running session, under E-STOP,
+outside With bots mode, on a CU without bot support, on a slot already used as a bot
+or owned by an API agent, on a disabled driver, and while another `test.*` op or
+`link.bench` runs. `link.bench`, `test.pulse`, `test.lane` and `test.handback` wait for
+their end: over the WebSocket they are answered in the background, so `estop` sent
+meanwhile is processed at once (it ends the test early with `aborted: "estop"`).
+While a `test.*` op runs, `bot.*` ops on its slot are refused (the throttle cap cannot be bypassed from another page). While one runs, `state.hwtest` is `{kind, slot, phase}` (`null` otherwise) and `hwtest`
+events carry the phases (`run`, `paused`, `done`).
 
 Importing an image: `POST /api/firmware/upload?name=<file>.HMF` with the raw
 file as the body. During a flash, every command other than reads and
@@ -103,6 +118,7 @@ See [architecture.md](architecture.md) §4 for `session`, `cu`, `cars`. In addit
             "applied": 7, "gate": null, "agent": "rl-01", "api_age_ms": 40,
             "lane_pending": false, "profile": {…}}],
   "cars": [{"slot": 0, …, "controller": "api"}],   // human | bot | api
+  "connectors": [{"agent": "camera", "name": "Camera", "ui_url": "http://…", "status": "tracking"}],
   "positions": {"source": "sim", "age_ms": 0, "stale": false, "cars": [{"slot": 0, "s": 0.42, …}]},
   "sim": {"t": 12.3, "phase": 0, "cars": [{"slot": 0, "s": 0.42, "lane": 0, "v": 2.1, "off": false, …}]}
 }
@@ -122,6 +138,12 @@ side); sending it again before the switch changes nothing more.
 a track connector is running: an agent that uses it must be able to drive
 without it (`null` or `stale`), from `cars` (line crossings, lap times) and
 the clock.
+
+Autopilot `corners` ("Corner speed (map)") is a built-in Auto profile that drives from
+`positions` and the track shape, with the virtual CU or any connector; it falls back to the
+`target` behaviour when they are missing or older than 500 ms. Its parameters: `a_lat`
+(m/s², start), `margin_pct`, `cap` (highest throttle), `latency_s` (0.1), `v_max`,
+`tau_acc`, `tau_brake` (motor model), `f_max` (highest per-corner speed factor learned, default 1.2, hard ceiling 1.5: raise it once the real car's grip is measured), plus the `target` ones used by the fallback. When the positions go stale, the output never exceeds the last position-driven throttle for 1 s before falling back to target pace.
 
 ### Events useful to an agent
 
@@ -161,6 +183,9 @@ Conventions:
   `off` = off the track (both optional).
 - `lane_offset`: distance between the centre line and a lane, in the units of
   the points.
+- `length_m`: lap length in metres (a number: the centre line; or `[lane 0, lane 1]`
+  like the virtual CU). Optional, but the `corners` autopilot (curvature in metres) needs it:
+  without it that profile holds its target lap time instead.
 - One connector at a time: the one that declared the track owns it. **If it
   disconnects, the shape and the positions disappear** (and so does the map in
   the UI); without a shape there is no map, but positions that are sent are
@@ -181,6 +206,30 @@ every shape change. Full example:
 (positions estimated from the CU's lap times; a model for a camera connector).
 On the client side: `RaceLabClient.set_track()`, `send_positions()`,
 `clear_track()`.
+
+### Connector card
+
+Any connector (a camera program, light gates...) can show up in the UI with a link to
+**its own page**. RaceLab never renders that page: the UI shows a chip (name, status, an
+"Open" link opening a new tab) in the Race view's track panel header and in System.
+Independent of `track.*`: a connector without a track can have a card, and it is **not**
+refused with the virtual CU.
+
+| op | arguments | effect |
+|---|---|---|
+| `connector.set` | `name` (1..40 chars), `ui_url?` (http/https only, <= 300 chars), `status?` (<= 80 chars) | set this connection's card (replaces the previous one); returns `{agent, name, ui_url, status}` |
+| `connector.clear` | | remove this connection's card |
+
+- One card per agent connection. It is **removed automatically when that agent
+  disconnects** (same as the `track.*` ownership).
+- Text is trimmed and must not contain control characters. Over-long values and any
+  `ui_url` that is not `http://` or `https://` with a host (`javascript:`, `data:`,
+  `file:`, relative URLs...) are refused, never truncated; a refused call keeps the
+  previous card.
+- `state["connectors"]`: `[{agent, name, ui_url, status}]` (empty list when none), and a
+  `connectors` event `{connectors: [...]}` on every change.
+- Python: `RaceLabClient.set_connector(name, ui_url=None, status=None)` and
+  `clear_connector()` (same on `SyncClient`).
 
 ## REST
 

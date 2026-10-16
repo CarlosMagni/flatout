@@ -61,6 +61,11 @@ en **Manuel**, curseur à 3, 6, 0 ; manette ignorée pendant le bot ; un seul
 changement de voie par appui ; STOP qui coupe. Détails dans le
 [guide utilisateur](../user-guide.md#before-the-first-real-test-the-bench) (en anglais).
 
+Sur la vraie piste, Système → **Test matériel** valide pas à pas la commande C de la CU
+(lien, latence, impulsion de gaz, changement de voie, rendu au bout de 0,75 s) et produit
+un rapport JSON à partager. Pose la voiture sur une ligne droite et garde une main sur
+STOP. Détails dans le [guide utilisateur](../user-guide.md#hardware-test-system-tab) (en anglais).
+
 Si l'app dit que les bots sont indisponibles, la CU est plus ancienne que la
 V338 : mets-la à jour avec la V339 d'origine dans Système → Options avancées
 (voir le [guide utilisateur](../user-guide.md#updating-the-cu-firmware), en anglais).

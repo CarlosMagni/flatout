@@ -354,3 +354,96 @@ def test_c_rejected_falls_back(make_link):
     link.set_bot(0, 6)
     assert wait_for(lambda: link.bot_transport == "B")
     assert wait_for(lambda: any(f.startswith(b"B0") and f != b"B0A" for f in cu.bot_frames()))
+
+
+# ------------------------------------------------------------ hardware test: heartbeat pause, bench
+
+def test_heartbeat_pause_holds_the_idle_refresh_and_expires_by_itself(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")   # heartbeat 200 ms
+    link.set_bot(2, 7)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 7)
+    link.pause_heartbeat(0.6)
+    assert link.hb_paused
+    n = len(cu.ctl_frames())
+    time.sleep(0.45)                                # > 2 heartbeats: no refresh
+    assert len(cu.ctl_frames()) == n and link.bot_targets()[2] == 7
+    # the pause ends: the bot is zeroed, never resumed at 7
+    assert wait_for(lambda: not link.hb_paused and link.bot_targets()[2] == 0, 1.0)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 0)
+    assert all(ctl_values(f)[0][2] in (0, None) for f in cu.ctl_frames()[n:])
+
+
+def test_heartbeat_pause_is_capped_at_three_seconds(make_link):
+    link, _ = make_link(FakeCU(bots=False), bot_transport="auto")
+    link.pause_heartbeat(60)
+    with link._lock:
+        assert link._hb_pause_until - time.monotonic() <= 3.0
+    link.resume_heartbeat()
+    assert not link.hb_paused
+
+
+def test_heartbeat_pause_still_lets_changes_and_estop_through(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(1, 9)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 9)
+    link.pause_heartbeat(3)
+    link.set_bot(1, 0)                              # a change goes out during the pause
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 0)
+    link.set_bot(1, 8)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 8)
+    link.estop()                                    # E-STOP: frame at once, and the pause is gone
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 0 and not link.hb_paused, 0.5)
+
+
+def test_heartbeat_pause_cleared_by_link_loss(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(1, 4)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 4)
+    link.pause_heartbeat(3)
+    cu.broken = True
+    assert wait_for(lambda: link.state != "connected", 2.0)
+    assert not link.hb_paused
+    cu.broken = False
+
+
+def test_heartbeat_pause_refused_on_the_b_transport(make_link):
+    link, _ = make_link(FakeCU(), bot_transport="B")
+    with pytest.raises(ValueError):
+        link.pause_heartbeat(1)
+    assert not link.hb_paused
+
+
+def test_bench_idle_adds_only_all_controllers_frames(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    done = []
+    link.bench(25, lambda result, error: done.append((result, error)))
+    assert wait_for(lambda: done, 5.0)
+    result, error = done[0]
+    assert error is None and result["answered"] == 25 and result["c_ack"]["n"] >= 1
+    assert cu.ctl_frames() and all(f[1:13] == b"0" * 12 for f in cu.ctl_frames())
+    link.bench(5, lambda r, e: None)
+    with pytest.raises(RuntimeError):               # one at a time
+        link.bench(5, lambda r, e: None)
+    link.bench_cancel()
+
+
+def test_bench_ended_by_a_link_loss(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    done = []
+    link.bench(300, lambda result, error: done.append((result, error)))
+    cu.broken = True
+    assert wait_for(lambda: done, 3.0)
+    assert done[0][1] == "link lost"
+    cu.broken = False
+
+
+def test_bench_refused_on_a_closed_link(make_link):
+    link, _ = make_link(FakeCU(bots=False), bot_transport="auto")
+    link.stop()
+    with pytest.raises(ValueError):
+        link.bench(5, lambda r, e: None)

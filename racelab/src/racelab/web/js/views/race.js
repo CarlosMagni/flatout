@@ -4,7 +4,7 @@ import {
 } from "../dom.js";
 import { t } from "../i18n.js";
 import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
-import { FuelGauge, Fader, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
+import { FuelGauge, Fader, fillConnectors, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
 import { ConnectChooser } from "./connect.js";
 
 const LAP_MODES = new Set(["race", "rival", "elimination"]);
@@ -73,8 +73,9 @@ export class RaceView {
     this.bestWho = h("div.who-line");
     this.best = h("section.panel.best", {}, h("div.eyebrow", { text: t("race.best_lap") }), this.bestValue, this.bestWho);
     this.mapSource = h("span.chip");
+    this.mapConnectors = h("span.connector-chips");
     this.mapBox = h("section.panel.hidden", {},
-      h("div.panel-head", {}, h("h2", { text: t("race.track") }), h("span.spacer"), this.mapSource),
+      h("div.panel-head", {}, h("h2", { text: t("race.track") }), h("span.spacer"), this.mapConnectors, this.mapSource),
       h("div.trackmap"));
     this.feed = h("ul.feed");
     this.feedBox = h("section.panel", {}, h("div.panel-head", {}, h("h2", { text: t("race.feed") })), this.feed);
@@ -367,7 +368,11 @@ export class RaceView {
   updateMap(state) {
     const geo = store.meta?.track;
     const show = !!geo?.points?.length;
-    toggle(this.mapBox, "hidden", !show);
+    // a connector without a track (light gates...) still gets its chip
+    fillConnectors(this.mapConnectors, state.connectors);
+    toggle(this.mapBox, "hidden", !show && !state.connectors?.length);
+    toggle(this.mapSource, "hidden", !show);
+    toggle(this.mapBox.querySelector(".trackmap"), "hidden", !show);
     if (!show) return;
     const pos = state.positions;
     const label = geo.source === "sim" ? t("track.virtual_cu") : geo.name || geo.source || t("track.connector");
@@ -599,6 +604,7 @@ function profileText(p) {
   if (p.kind === "constant") return `${label} · ${p.value}`;
   if (p.kind === "target") return `${label} · ${lapTime(p.target_ms)}`;
   if (p.kind === "rival") return `${label} · #${(p.rival_slot ?? 0) + 1} ${p.margin_pct >= 0 ? "+" : ""}${t("fmt.pct", { v: p.margin_pct })}`;
+  if (p.kind === "corners") return `${label} · ${p.a_lat} m/s²`;
   return label;
 }
 
@@ -615,7 +621,7 @@ function openProfileDrawer(slot, current) {
     seg.set(k);
     renderForm();
   });
-  seg.el.classList.add("full");
+  seg.el.classList.add("full", "wrap");
 
   const num = (label, key, opts) => {
     const v = values[kind];
@@ -633,11 +639,30 @@ function openProfileDrawer(slot, current) {
     return h("label.field", {}, h("span", { text: label }), input);
   };
 
+  // decimal value (m/s²...), between min and max
+  const decimal = (label, key, min, max) => {
+    const v = values[kind];
+    const input = h("input.input.num", { value: v[key], inputmode: "decimal" });
+    input.addEventListener("change", () => {
+      const x = parseFloat(input.value.replace(",", "."));
+      if (Number.isFinite(x)) v[key] = Math.max(min, Math.min(max, x));
+      input.value = v[key];
+    });
+    return h("label.field", {}, h("span", { text: label }), input);
+  };
+
   function renderForm() {
     const v = values[kind];
     const fields = [];
     if (kind === "constant") fields.push(num(t("profile.throttle"), "value", { min: 0, max: 15 }));
     if (kind === "target") fields.push(seconds(t("profile.target_time"), "target_ms"));
+    if (kind === "corners") {
+      fields.push(h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" } },
+        decimal(t("profile.a_lat"), "a_lat", 1, 40),
+        num(t("profile.corner_margin"), "margin_pct", { min: 0, max: 50 }),
+        num(t("profile.cap"), "cap", { min: 0, max: 15 })));
+      fields.push(seconds(t("profile.fallback_time"), "target_ms"));
+    }
     if (kind === "rival") {
       const drivers = (store.meta?.drivers || []).filter((d) => d.slot < 6 && d.slot !== slot);
       const sel = h("select.input", {}, drivers.map((d) => h("option", { value: d.slot, text: `#${d.slot + 1} ${d.name}` })));
@@ -659,6 +684,7 @@ function openProfileDrawer(slot, current) {
       target: t("profile.desc.target"),
       map: t("profile.desc.map"),
       rival: t("profile.desc.rival"),
+      corners: t("profile.desc.corners"),
     }[kind];
     form.replaceChildren(seg.el, h("p.dim", { text: desc, style: { margin: 0 } }), ...fields);
   }

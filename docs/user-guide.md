@@ -91,8 +91,9 @@ All the configuration is documented in
 - **Bots**: in Normal mode, the card "Race against the computer" → **Turn on
   bots** (or **With bots** at the top). Then one switch per car: on, the
   computer drives it; off, its controller does. How it drives: **Auto**
-  (autopilot, the default: constant throttle, target lap time, throttle map or
-  rival — **Settings**; it waits for the race to start), **Manual** (0–15 fader
+  (autopilot, the default: constant throttle, target lap time, throttle map,
+  rival or corner speed — **Settings**, see [Auto driver profiles](#auto-driver-profiles);
+  it waits for the race to start), **Manual** (0–15 fader
   with a safety detent above 12) or **API** (an external agent). The Lane button
   = lane change at the next switch. **Back to normal** hands every car back.
 - The autopilots do not handle pit stops yet: in the CU's fuel mode, a bot
@@ -101,6 +102,44 @@ All the configuration is documented in
 - `STOP` (or `Esc`): emergency stop, throttle 0 on every bot. It can only be
   cleared with the mouse.
 - **Big screen**: a view of the ranking readable from across the room.
+
+## Auto driver profiles
+
+The profile of an **Auto** car is chosen in **Settings** (the gear next to the switch):
+
+| Profile | What it does |
+|---|---|
+| Constant throttle | A fixed throttle. The simplest way to tune a car. |
+| Target pace | Adjusts the throttle after each lap to hold a lap time. A lap much longer than the best is read as an off-track moment: the bot lifts off, then slowly climbs back. |
+| Throttle map | A throttle per portion of the lap (straights, corners), timed from the last line crossing. |
+| Rival | Follows another driver's pace, with a margin. |
+| Corner speed (map) | Drives from the car **positions** and the track **shape** (see below). |
+
+**Corner speed (map)** ("AI driver v1") needs the car positions and the track shape. The virtual
+CU provides both; on a real track a [track connector](api.md#track-connector-track-shape--positions)
+(for example the camera) must be running and must send `length_m` with the shape (the lap
+length in metres, or `[lane 0, lane 1]`), otherwise the profile cannot scale the corners. How it
+works:
+
+1. From the shape it computes the curvature of the track and, for each lane, a target speed:
+   `sqrt(a_lat / curvature)` in corners, reduced by the margin, and a backward pass so that the
+   target already drops before the corner (braking distance of the motor).
+2. Every 50 ms it predicts the car's speed one latency ahead (0.1 s) with a model of the motor,
+   and picks the throttle that reaches the target speed of the road just ahead: it lifts when the
+   car is above it. The throttle never exceeds the profile's **cap**.
+3. It learns each corner's limit during the session: +3 % on the corner's speed after a clean
+   pass at the target, -8 % and frozen after an off track (the car's `off` flag, or a lap much
+   slower than the best, blamed on the corner where the most time was lost). Factors stay between
+   0.5 and 1.5, and a frozen corner never goes up again. They are forgotten at the next session,
+   after an emergency stop or when the profile is saved again.
+4. Without fresh positions (older than 500 ms), without a shape, or with a shape that has no
+   `length_m`, it holds the **target lap time** instead (shown as "Lap time to hold without
+   positions"), so a lost camera never leaves a car without a driver.
+
+Settings: **Grip at start** (m/s², lateral acceleration assumed in corners: lower is more
+careful, the learning raises it corner by corner; 8-12 is a good start for the virtual CU),
+**Margin** (%, taken off every target speed), **Throttle cap** (the highest throttle the profile
+ever sends; the global `max_throttle` of the safety settings still applies on top).
 
 ## The other screens
 
@@ -129,6 +168,7 @@ follows the rules of [bot-protocol.md](bot-protocol.md):
 | active bot | the 6-slot frame on every change, resent every 300 ms | its throttle, at most 1 change per slot per rail cycle, resent every 500 ms |
 | lights on / false start, session stopped, car finished | throttle 0 | throttle 0 |
 | AI agent silent > 600 ms or disconnected | throttle 0 (the bot keeps the slot) | same |
+| hand-back test (System, Hardware test) | `C` heartbeat paused for up to 3 s on purpose, the CU hands the slot back; the pause ends by itself, on STOP and on link loss, and the bot is zeroed, never resumed | not applicable |
 | E-STOP | throttle 0 (`P`) on every bot, before any other frame | `B<s>0` on every bot, before any other frame |
 | link lost then recovered | throttle 0 on every bot **before** any other command, faders back to 0 | same |
 | shutdown (Ctrl+C, SIGTERM, Quit) | a frame that hands back every slot | throttle 0 then `B<s>A` on each bot |
@@ -158,6 +198,42 @@ check with the **car lifted**, wheels in the air:
 
 If the real throttle does not follow the setpoint, or the switch is inverted,
 please open an issue with the CU version shown in System → Connection.
+
+## Hardware test (System tab)
+
+System → **Hardware test** validates the stock CU's `C` command on the real track,
+step by step. It needs a CU on V338/V339 and **With bots** on; put the car on a
+**straight**, clear the track, and keep a hand on **STOP** (the panel has its own
+STOP button that stays on screen). Each step gets a chip (To do, Running, PASS,
+FAIL, Interrupted, Not run).
+
+1. **Link check**: transport, CU version, bot transport (`C`, `B` or none),
+   bots supported. PASS only if the CU is connected and bots go through `C`.
+2. **Latency**: times 50, 100 or 300 round trips of the CU poll (nothing that can
+   move a car is sent) and shows min, median, p95, max, jitter, a text
+   histogram and the acknowledgement time of `C` frames. PASS means no lost
+   answer, p95 at most 150 ms and no round trip above 400 ms (an indication:
+   a `C` frame must arrive well under the CU's 750 ms limit).
+3. **Throttle pulse**: pick the car, a throttle (1 to 6, the server refuses more)
+   and a duration (0.2 to 2 s). The server holds the throttle, then forces 0
+   and hands the slot back; the page never times it. Answer "did the car move,
+   then stop?".
+4. **Lane change**: same run, plus one lane request. Answer whether the car changed
+   lane at the next lane changer.
+5. **Hand-back (CU watchdog)**: RaceLab holds a throttle, then stops refreshing the
+   `C` frame for 1.5 s. About 0.75 s later the CU must give the slot back to its
+   controller, so the car stops (with the controller idle or unplugged). RaceLab
+   cannot see this, so you answer yes or no. It then sends 0 and hands the slot back.
+   Every other slot must be free of bots, because the `C` frame covers all six.
+6. **Report**: **Copy report** collects the steps and your notes into one JSON,
+   saves it in the data folder (`hardware-tests/hwtest-<date>.json`) and copies
+   it, to share with another tester.
+
+The tests are refused during a session, under STOP, on a CU without bots, on a
+slot driven by an API agent or already a bot, and while another test runs. STOP
+interrupts any of them: the slot is zeroed and handed back. The same bench runs
+against the virtual CU (`racelab --sim --stock-firmware`). The ops behind it
+(`link.bench`, `test.*`) are in [api.md](api.md).
 
 ## Updating the CU firmware
 

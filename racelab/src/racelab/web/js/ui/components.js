@@ -24,6 +24,25 @@ export async function run(op, args = {}, okText) {
   }
 }
 
+// copies to the clipboard (with a fallback for plain http) and flashes "Copied" on the button
+export async function copyText(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const area = h("textarea", { "aria-hidden": "true", tabindex: -1 });
+    area.value = text;
+    Object.assign(area.style, { position: "fixed", opacity: "0", pointerEvents: "none" });
+    document.body.append(area);
+    area.select();
+    try { document.execCommand("copy"); } catch { /* nothing to do */ }
+    area.remove();
+  }
+  const before = button.textContent;
+  button.textContent = t("common.copied");
+  clearTimeout(button._t);
+  button._t = setTimeout(() => { button.textContent = before; }, 1400);
+}
+
 // ------------------------------------------------------------ start lights
 
 export function Lights() {
@@ -260,4 +279,21 @@ export function Segmented(options, value, onChange) {
   buttons.forEach((b) => b.addEventListener("click", () => onChange?.(b.dataset.value)));
   set(value);
   return { el, set, buttons };
+}
+
+// ------------------------------------------------------------ connector cards
+
+// One chip per connector: name, status and an "Open" link to the connector's own page
+// (new tab, never an iframe). Text comes from the connector: set as text only (escaped).
+// The server only accepts http(s) links; checked again here before making a link.
+export function fillConnectors(el, list) {
+  const sig = JSON.stringify(list || []);
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  el.replaceChildren(...(list || []).map((c) => {
+    const safe = typeof c.ui_url === "string" && /^https?:\/\//i.test(c.ui_url);
+    return h("span.chip.connector", { title: c.agent }, h("span.connector-name", { text: c.name }),
+      c.status ? h("span.connector-status", { text: c.status }) : null,
+      safe ? h("a", { href: c.ui_url, target: "_blank", rel: "noopener", text: t("connector.open") }) : null);
+  }));
 }

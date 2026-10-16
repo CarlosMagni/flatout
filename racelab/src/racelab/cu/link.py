@@ -37,6 +37,7 @@ from ..events import (
     StatusMsg,
     TimerMsg,
 )
+from .bench import C_PROBES, Bench
 from .unit import FORBIDDEN_LETTERS, CommandRejected, Parsed, RaceControlUnit
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 _UNKNOWN = object()  # throttle actually applied by the CU is unknown
 # C table (stock V339): the CU drops it ~750 ms after the last frame, so resend well before
 CTL_HEARTBEAT_S = 0.3
+HB_PAUSE_MAX_S = 3.0  # hard ceiling of the hand-back test's heartbeat pause (it expires by itself)
 CTL_LANE_PRESS_S = 0.12  # lane button held for at least one rail cycle (75 ms)
 # firmware versions with the C table: added in V338, identical in V339 (V336/V337 do not
 # dispatch C); checked against the official images, V339 rebuilt in firmware/reconstruction
@@ -112,6 +114,8 @@ class CULink:
         self._lane: set[int] = set()
         self._holds: set[str] = set()  # "estop", "reconnect": throttle forced to 0
         self._urgent = False
+        self._hb_pause_until = 0.0  # hand-back test: no C heartbeat until then (monotonic), 0 = off
+        self._bench: Bench | None = None
 
         self._high: deque[_Command] = deque()
         self._low: deque[_Command] = deque()
@@ -181,6 +185,56 @@ class CULink:
     def clear_estop(self) -> None:
         with self._lock:
             self._holds.discard("estop")
+
+    # ------------------------------------------------------------ hardware test (docs/api.md)
+
+    def pause_heartbeat(self, seconds: float) -> None:
+        """Hand-back test: stop refreshing the C table for `seconds` (<= 3 s), so that the CU's
+        ~750 ms expiry hands the slots back. Only the idle heartbeat is held: a changed frame
+        or an E-STOP still goes out. The pause ends by itself; when it does, the active bots are
+        zeroed, never resumed at their old throttle."""
+        if self.bot_transport != "C":
+            raise ValueError("heartbeat pause: only with the C command")
+        with self._lock:
+            self._hb_pause_until = time.monotonic() + max(0.0, min(float(seconds), HB_PAUSE_MAX_S))
+        self._wake.set()
+
+    def resume_heartbeat(self) -> None:
+        with self._lock:
+            self._hb_pause_until = 0.0
+        self._wake.set()
+
+    @property
+    def hb_paused(self) -> bool:
+        with self._lock:
+            return self._hb_pause_until > time.monotonic()
+
+    def bench(self, n: int, on_done: Callable[[dict, str | None], None]) -> None:
+        """Time `n` round trips of the CU poll (see cu/bench.py); `on_done(result, error)` runs in the link thread."""
+        with self._lock:
+            if self.state != "connected":
+                raise ValueError("CU not connected")
+            if self._bench is not None:
+                raise RuntimeError("a latency test is already running")
+            idle = all(t is None for t in self._target)
+            c_target = min(n, C_PROBES) if self.bot_transport == "C" and idle else 0
+            self._bench = Bench(n, c_target, on_done)
+        self._wake.set()
+
+    def bench_cancel(self) -> Bench | None:
+        """Stop the run (if any) and hand back what it collected."""
+        with self._lock:
+            bench, self._bench = self._bench, None
+        return bench
+
+    def _bench_end(self, error: str | None = None) -> None:
+        with self._lock:
+            bench, self._bench = self._bench, None
+        if bench is not None:
+            try:
+                bench.on_done(bench.result(), error)
+            except Exception:
+                logger.exception("bench callback")
 
     def resume_bots(self) -> None:
         """Lift the hold set on reconnection (the app has acknowledged throttle 0)."""
@@ -275,6 +329,7 @@ class CULink:
     # ------------------------------------------------------------ thread I/O
 
     def _zero_targets(self) -> None:
+        self._hb_pause_until = 0.0  # E-STOP, link loss, pause expiry: the heartbeat is back
         for slot in BOT_SLOTS:
             if self._target[slot] is not None:
                 self._target[slot] = 0
@@ -322,6 +377,7 @@ class CULink:
                 logger.exception("unexpected error in the CU link")
                 self._set_state("lost", "internal error (see the log)")
             finally:
+                self._bench_end("link lost")
                 try:
                     conn.close()
                 except Exception:
@@ -343,6 +399,7 @@ class CULink:
             self.bot_transport = transport
             self.bots_supported = transport is not None
             target = list(self._target)
+            self._hb_pause_until = 0.0
             self._ctl_last, self._lane_until = None, [0.0] * 6
         if transport == "C":
             # throttle 0 on the app's bots, every other slot on its controller
@@ -395,6 +452,8 @@ class CULink:
                     self._wake.clear()
             except CUTimeoutError as e:
                 timeouts += 1
+                if self._bench is not None:
+                    self._bench.lost += 1
                 logger.debug("CU timeout (%d): %s", timeouts, e)
                 if timeouts >= self._cfg.max_timeouts:
                     raise LinkLost(f"{timeouts} missed replies") from e
@@ -419,6 +478,12 @@ class CULink:
         msg = cu.poll_message()
         if cu.last_rtt is not None:
             self._rtt = cu.last_rtt if self._rtt is None else 0.8 * self._rtt + 0.2 * cu.last_rtt
+        bench = self._bench
+        if bench is not None:
+            if cu.last_rtt is not None and len(bench.poll) < bench.n - bench.lost:
+                bench.poll.append(cu.last_rtt)
+            if bench.finished():
+                self._bench_end()
         if msg is not None:
             self._dispatch(msg)
 
@@ -475,6 +540,11 @@ class CULink:
         min_gap = self._safety.min_bot_interval_ms / 1000
         with self._lock:
             urgent, self._urgent = self._urgent, False
+            if self._hb_pause_until and (urgent or now >= self._hb_pause_until):
+                if not urgent:
+                    self._zero_targets()  # the test is over (or forgotten): never resume at the old throttle
+                self._hb_pause_until = 0.0
+            paused = self._hb_pause_until > 0.0
             pressed = {s for s in self._lane if self._target[s] is not None}
             self._lane = set()
             for slot in pressed:
@@ -484,8 +554,10 @@ class CULink:
             last, sent_at = self._ctl_last, self._ctl_sent_at
         frame = (target, lanes)
         active = any(t is not None for t in target)
-        if not (urgent or (frame != last and now - sent_at >= min_gap)
-                or (active and now - sent_at >= heartbeat)):
+        bench = self._bench
+        probe = bench is not None and not active and bench.wants_c_probe() and now - sent_at >= min_gap
+        if not (urgent or probe or (frame != last and now - sent_at >= min_gap)
+                or (active and not paused and now - sent_at >= heartbeat)):
             return
         try:
             cu.setctl(list(target), lanes)
@@ -499,6 +571,8 @@ class CULink:
             return
         with self._lock:
             self._ctl_last, self._ctl_sent_at = frame, now
+        if bench is not None and cu.last_rtt is not None:
+            bench.c.append(cu.last_rtt)
         self._stats["bot"] += 1
         for slot in BOT_SLOTS:
             if target[slot] is not None or last is None or last[0][slot] is not None:

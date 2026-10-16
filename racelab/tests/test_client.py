@@ -63,6 +63,7 @@ class FakeServer:
             "link": {"state": "connected"}, "cars": [self.car], "bots": [self.bot],
         }
         self.requests: list[dict[str, Any]] = []
+        self.connector_calls: list[tuple[str, dict[str, Any]]] = []
         self.queries: list[dict[str, str]] = []
         self.hang_ops: set[str] = set()  # ops with no reply
         self.push_states = True
@@ -227,6 +228,8 @@ class FakeServer:
                     self.bot["throttle"] = action["throttle"]
         elif op == "bot.unclaim":
             self.bot.update(active=False, driver=None, agent=None, throttle=None)
+        elif op in ("connector.set", "connector.clear"):
+            self.connector_calls.append((op, args))
         else:
             raise FakeError(f"unknown command: {op}")
         return None
@@ -474,6 +477,26 @@ def test_sync_client_flow(fake):
         c.act(0, 1)
     c.close()  # idempotent
     stream.close()
+
+
+def test_connector_card_calls(fake):
+    with SyncClient(fake.url, agent="cam") as c:
+        c.set_connector("Camera", ui_url="http://pi:8090/", status="tracking")
+        c.set_connector("Gates")
+        c.clear_connector()
+    assert fake.connector_calls == [
+        ("connector.set", {"name": "Camera", "ui_url": "http://pi:8090/", "status": "tracking"}),
+        ("connector.set", {"name": "Gates", "ui_url": None, "status": None}),
+        ("connector.clear", {}),
+    ]
+
+    async def main():
+        async with RaceLabClient(fake.url, agent="cam2") as c:
+            await c.set_connector("Async", status="ok")
+            await c.clear_connector()
+
+    run(main())
+    assert fake.connector_calls[-2] == ("connector.set", {"name": "Async", "ui_url": None, "status": "ok"})
 
 
 def test_sync_client_connect_failure_releases_thread():

@@ -19,7 +19,7 @@ from typing import Any, Protocol
 
 from ..config import SafetyConfig
 from ..events import BOT_SLOTS, LinkState
-from .profiles import ConstantProfile, Context, Profile, profile_from_dict
+from .profiles import POS_MAX_AGE_MS, ConstantProfile, Context, Profile, profile_from_dict
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,9 @@ class BotManager:
         self._phase = 0
         self._fuel_mode = False
         self._cars: dict[int, dict[str, Any]] = {}
+        self._positions: dict[str, Any] | None = None  # state["positions"], as last given to tick()
+        self._geometry: dict[str, Any] | None = None
+        self._positions_at = 0.0
 
     # ------------------------------------------------------------ commands
 
@@ -193,9 +196,14 @@ class BotManager:
             for s in self.slots:
                 s.profile.reset()
 
-    def tick(self, engine_snapshot: dict[str, Any]) -> None:
-        """20 Hz: compute each bot's throttle and push it to the link."""
+    def tick(self, engine_snapshot: dict[str, Any], positions: dict[str, Any] | None = None,
+             geometry: dict[str, Any] | None = None) -> None:
+        """20 Hz: compute each bot's throttle and push it to the link.
+
+        `positions` (state["positions"]) and `geometry` (the track shape) come from the virtual
+        CU or a track connector; they are optional, profiles must work without them."""
         now = self._clock()
+        self._positions, self._geometry, self._positions_at = positions, geometry, now
         self._session_state = engine_snapshot["session"]["state"]
         self._phase = engine_snapshot["cu"]["phase"]
         self._fuel_mode = bool(engine_snapshot["cu"].get("fuel_mode"))
@@ -231,8 +239,28 @@ class BotManager:
             if best:
                 rival_ms = sum(best) / len(best)
         ctx = Context(now=now, since_cross_s=None if since is None else since / 1000,
-                      laps=car.get("laps", 0), rival_lap_ms=rival_ms)
-        return s.profile.output(ctx)
+                      laps=car.get("laps", 0), rival_lap_ms=rival_ms,
+                      pos=self._own_position(s.slot, now), geometry=self._geometry)
+        try:
+            return s.profile.output(ctx)
+        except Exception:
+            # a profile bug must not leave the previous throttle applied: stop the car
+            logger.exception("profile of slot %d failed: throttle 0", s.slot)
+            return 0
+
+    def _own_position(self, slot: int, now: float) -> dict[str, Any] | None:
+        """The slot's published position, or None when unknown or stale (profiles then fall back)."""
+        feed = self._positions
+        if not feed or feed.get("stale"):
+            return None
+        age = feed.get("age_ms", 0) + (now - self._positions_at) * 1000
+        if age > POS_MAX_AGE_MS:
+            return None
+        for c in feed.get("cars") or []:
+            if c.get("slot") == slot:
+                return {"s": c.get("s"), "lane": c.get("lane", 0), "v": c.get("v"),
+                        "off": bool(c.get("off")), "age_ms": age}
+        return None
 
     def _gate(self, s: BotSlot, now: float) -> str | None:
         if self.estopped:

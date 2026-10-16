@@ -346,6 +346,15 @@ class RaceLabClient:
     async def clear_track(self) -> None:
         await self.request("track.clear")
 
+    # -- connector card: a chip in the RaceLab UI with a link to the connector's own page
+    async def set_connector(self, name: str, ui_url: str | None = None, status: str | None = None) -> dict[str, Any]:
+        """Show (or replace) this connection's card: `name` (<= 40 chars), `ui_url` (http/https,
+        <= 300) opened in a new tab, `status` (<= 80). It disappears when the connection closes."""
+        return await self.request("connector.set", name=name, ui_url=ui_url, status=status)
+
+    async def clear_connector(self) -> None:
+        await self.request("connector.clear")
+
     async def setup(self, **settings: Any) -> dict[str, Any]:
         """New session (`grid` state), e.g. `setup(type="training", episode_laps=5)`."""
         return await self.request("race.setup", settings=settings)
@@ -505,6 +514,12 @@ class SyncClient:
 
     def clear_track(self) -> None:
         self._call(self._client.clear_track())
+
+    def set_connector(self, name: str, ui_url: str | None = None, status: str | None = None) -> dict[str, Any]:
+        return self._call(self._client.set_connector(name, ui_url, status))
+
+    def clear_connector(self) -> None:
+        self._call(self._client.clear_connector())
 
     def setup(self, **settings: Any) -> dict[str, Any]:
         return self._call(self._client.setup(**settings))

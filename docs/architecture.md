@@ -49,6 +49,15 @@ the CU's version is `?338` or `?339`, otherwise `B` if the module answers, other
 falls back the same way if the CU rejects `C`. Both feed the same per-slot model
 (`set_bot` / lane / release), so nothing above the link knows which one is used.
 
+Hardware test bench (System tab, ops `link.bench` and `test.*`, see [api.md](api.md)): `cu/bench.py`
+holds the latency statistics; `CULink.bench()` samples the poll round trips the link makes anyway
+(plus the `C` acknowledgement), and `CULink.pause_heartbeat()` / `resume_heartbeat()` hold the idle
+`C` heartbeat for the hand-back test (a deadline in the link thread, 3 s ceiling, cleared by E-STOP,
+link loss and expiry). The app owns the safety: a test takes a slot as a manual bot and always zeroes
+and releases it in a `finally`. Because these ops wait, the WebSocket answers `link.bench` and
+`test.*` in a background task (other ops keep their strict order), so STOP is never queued behind them;
+a closed client cancels its tests.
+
 ## 1. Link messages (`racelab/events.py`)
 
 `StatusMsg`, `TimerMsg`, `LinkState`, `LinkStats`, `BotSent`, `RawFrame`
@@ -287,6 +296,10 @@ autopilot; Auto), `api` (external agent; AI). Safety:
   when the car has finished or is eliminated, when an API agent has been silent
   for more than `deadman_ms`, when the link is lost;
 - `max_throttle` ceiling;
+- a profile that raises an exception is stopped (throttle 0), never left at its last value;
+- `tick(snapshot, positions, geometry)`: profiles get their own car's `positions` (None when
+  missing or older than 500 ms) and the track shape in `Context`, and must work without them
+  (the `corners` profile falls back to the target pace);
 - on reconnection: throttle 0 on every bot slot (the link does it before any
   other command), then the drivers resume;
 - on shutdown: throttle 0 then `A` (if `release_on_exit`).

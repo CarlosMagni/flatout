@@ -157,6 +157,7 @@ class Track:
             self._lane(xs, ys, tx, ty, kappa, offset) for offset in (LANE_OFFSET, -LANE_OFFSET)
         )
         self._xs, self._ys = xs, ys
+        self._geometry: dict | None = None
 
     def _lane(self, xs, ys, tx, ty, kappa, offset: float) -> Lane:
         n = self.n
@@ -197,7 +198,12 @@ class Track:
         return ln.s[i] + (u * self.n - i) * (ln.s[i + 1] - ln.s[i])
 
     def geometry(self) -> dict:
-        """Drawing for the UI: centerline normalized into [0, 1]²."""
+        """Drawing for the UI: centerline normalized into [0, 1]². Built once, do not modify."""
+        if self._geometry is None:
+            self._geometry = self._build_geometry()
+        return self._geometry
+
+    def _build_geometry(self) -> dict:
         xs, ys = self._xs, self._ys
         x0, y0 = min(xs), min(ys)
         size = max(max(xs) - x0, max(ys) - y0)

@@ -241,6 +241,13 @@ a { color: inherit; }
 .chip.info { color: var(--info); background: rgba(106, 169, 255, .12); }
 .chip.sb { color: var(--sb); background: rgba(191, 90, 242, .14); }
 
+.connector-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.connector-chips.left { justify-content: flex-start; }
+.chip.connector { text-transform: none; letter-spacing: 0; font-weight: 600; max-width: 100%; }
+.chip.connector .connector-status { color: var(--text-3); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.chip.connector a { color: var(--info); text-decoration: none; }
+.chip.connector a:hover { text-decoration: underline; }
+
 /* driver badge (controller / bot / AI) */
 .who {
   font: 600 11px var(--mono);
