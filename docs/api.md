@@ -44,7 +44,7 @@ is `hello.client`),
 | op | arguments | effect |
 |---|---|---|
 | `state` | | full state (same content as the `state` messages) |
-| `meta` | | session types, bot profiles, drivers, safety settings, track geometry (simulator) |
+| `meta` | | session types, bot profiles, race brain pilots (`pilots`), drivers, safety settings, track geometry (simulator) |
 | `subscribe` | `state_hz?`, `raw?` | change the rate / subscribe to raw frames |
 | `race.setup` | `settings: {type, laps, duration_s, elim_every, episode_laps, rival_slot, rival_margin_pct, title}` | new session (state `grid`) |
 | `race.start` / `race.pause` / `race.resume` / `race.stop` | | session control (including the CU start lights) |
@@ -58,7 +58,8 @@ is `hello.client`),
 | `bot.release` | `slot` | give the slot back to the physical controller |
 | `bot.throttle` | `slot`, `value` | (UI) throttle of the manual driver |
 | `bot.lane` | `slot` | one-shot lane change |
-| `bot.profile` | `slot`, `profile: {kind, …}` | autopilot profile (Auto driver): `constant`, `target`, `rival`, `map` or `corners`; the parameters and defaults of each kind are in `meta.profiles` |
+| `bot.profile` | `slot`, `profile: {kind, …}` | autopilot profile (Auto driver): `constant`, `target`, `rival`, `map`, `corners` or `brain` ([race brain](#race-brain-profile-brain)); the parameters and defaults of each kind are in `meta.profiles` |
+| `bot.brain` | `slot`, `request: pit\|lane` | race brain only (refused otherwise): one-shot test request, `pit` = pit at the next pit entry, `lane` = change lane at the next changer; timed by the brain like its own moves, dropped by a new session, an E-STOP or a reconnection |
 | `estop` / `estop.clear` | | emergency stop: throttle 0 on every bot |
 | `mode.set` | `mode: classic\|advanced` | outside a session only |
 | `car.program` | `slot`, `speed?`, `brake?`, `fuel?` (0..15) | program a car (outside a session) |
@@ -117,7 +118,8 @@ See [architecture.md](architecture.md) §4 for `session`, `cu`, `cars`. In addit
   "bots": [{"slot": 0, "active": true, "driver": "api", "throttle": 7, "requested": 7,
             "applied": 7, "gate": null, "agent": "rl-01", "api_age_ms": 40,
             "lane_pending": false, "profile": {…},
-            "drive": null}],  // corners profile: "map" (from the map) | "pace" (fallback), else null
+            "drive": null,   // corners profile (or a brain's corners pilot): "map" (from the map) | "pace" (fallback), else null
+            "brain": null}], // race brain: {intent_key, intent_args, …}, see below; null for the other profiles
   "cars": [{"slot": 0, …, "controller": "api"}],   // human | bot | api
   "connectors": [{"agent": "camera", "name": "Camera", "ui_url": "http://…", "status": "tracking"}],
   "positions": {"source": "sim", "age_ms": 0, "stale": false, "cars": [{"slot": 0, "s": 0.42, …}]},
@@ -145,6 +147,67 @@ Autopilot `corners` ("Corner speed (map)") is a built-in Auto profile that drive
 `target` behaviour when they are missing or older than 500 ms. Its parameters: `a_lat`
 (m/s², start), `margin_pct`, `cap` (highest throttle), `latency_s` (0.1), `v_max`,
 `tau_acc`, `tau_brake` (motor model), `f_max` (highest per-corner speed factor learned, default 1.2, hard ceiling 1.5: raise it once the real car's grip is measured), plus the `target` ones used by the fallback. When the positions go stale, the output never exceeds the last position-driven throttle for 1 s before falling back to target pace.
+
+### Race brain (profile `brain`)
+
+"Race brain" ("Cerveau de course") is an Auto profile made of a **pilot** (the throttle), a **lane
+planner**, a **pit planner** and a small arbiter ([`bots/brain.py`](../racelab/src/racelab/bots/brain.py)):
+
+```jsonc
+{"kind": "brain",
+ "pilot": "corners",            // a name from meta.pilots ("corners", "target")
+ "pilot_params": {"cap": 8},    // that pilot's own parameters (the profile of the same name)
+ "lane": {"policy": "keep",     // keep | fastest | overtake | alternate
+          "every": 1,           // alternate: a change every N laps
+          "gap_m": 0.8,         // overtake: a slower car ahead in our lane, closer than this
+          "clear_m": 0.4,       // a change needs the target lane free this far around the car
+          "hysteresis_pct": 2.0, // fastest: the other lane must be this much faster (best clean laps)
+          "d_min_m": 0.15, "d_max_m": 2.0, "latency_s": 0.25},  // request timing, see below
+ "pit": {"policy": "auto",      // off | auto | now
+         "reserve_laps": 2.0,   // auto: pit when the fuel left after the next lap < reserve × fuel per lap
+         "last_laps": 1,        // auto: never in the session's last N laps (nor when the fuel is enough to finish)
+         "min_laps": 5,         // auto: never two stops within N laps
+         "throttle": 4,         // throttle cap in the pit lane
+         "max_stop_s": 12.0,    // longest wait at the stop for a full tank
+         "zone": null,          // [entry, exit] in lap fractions from the line; null = the track map's `pit`
+         "lane": null}}         // lane the pit entry is taken from (0 | 1); null = either
+```
+
+- **Pilot**: `meta.pilots` is the registry (`PILOTS` in `brain.py`): `[{name, label, label_key,
+  available, reason, params: [{key, label_key, min, max, scale?}], defaults}]`. The UI builds its pilot
+  selector and the pilot's few fields from it. A new pilot is one module exposing `PILOT` plus one
+  registry line (`"mpc": load_pilot("mpc")` for `bots/mpc.py`); if its module cannot be imported (a missing
+  dependency) it is listed with `available: false` and the reason. In the pit lane (the CU's
+  `cars[].pit`) the pilot is capped at `pit.throttle`, held at 0 at the stop (the middle of the pit
+  zone; without a usable position, 0.5 s after the pit flag) until the tank reads 15 or `max_stop_s`,
+  then leaves at the cap.
+- **Arbiter**: the manager's gates (E-STOP, link, lights, session, finished) come first and are
+  unchanged, then pit (planned or requested) > a requested lane change > overtake > fastest lane >
+  alternate > keep.
+- **Timing**: a lane request goes out at most once per lane changer / pit entry pass, when that point is
+  between `d_min_m + v × latency_s` and `d_max_m` (at least 0.5 m wide) ahead and the previous point is
+  0.3 m behind, never in the pit lane. With the CU's pit lane on, the pit entry takes the request like a
+  changer: a lane request is never sent with the pit entry next. Fractions: the map's `changers` / `pit`
+  are along the drawn path, `pit.zone` and positions' `s` from the finish line.
+- **Pit planner**: the fuel per lap is measured from `cars[].fuel` over the session's tanks (the first
+  estimate after 2 laps). `now` pits once at the first opportunity, again after a new session, an E-STOP
+  or a reconnection. Pit stops need `cu.fuel_mode` and `cu.pit_lane`.
+- **Without positions** (missing, older than 500 ms, or without `v`), a map, `length_m`, changers or a pit
+  zone, the planners that need them stop and say why; the pilot falls back like `corners` does. The brain
+  never guesses a position to trigger a lane change or a pit entry.
+
+`state.bots[].brain` (`null` for the other profiles):
+
+```jsonc
+{"intent_key": "brain.intent.pit", "intent_args": {"fuel": 3},   // a UI dictionary key + its values
+ "pilot": "corners", "lane_policy": "alternate", "pit_policy": "auto",
+ "next": "pit",              // what the next request will be: "pit" | "lane" | null
+ "fuel_per_lap": 0.74,       // measured, null until known
+ "lane_why": null, "pit_why": "brain.why.positions"}   // why a planner is stopped (dictionary key), else null
+```
+
+`intent_args` may carry `why` (a dictionary key, shown after the intent), `slot` (the car being
+passed), `lane` (1 or 2), `fuel` (0..15) and `n` (laps).
 
 ### Events useful to an agent
 

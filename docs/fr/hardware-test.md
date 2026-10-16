@@ -201,6 +201,28 @@ choisis **Vitesse en virage (carte)**.
 - [ ] Les facteurs appris par virage sont remis à zéro à la séance suivante, après un STOP, et quand le profil est
   enregistré à nouveau : n'enregistre pas le profil entre deux tours si tu veux voir l'apprentissage.
 
+## 8b. Le cerveau de course : changer de voie exprès, puis un arrêt au stand
+
+Prérequis : l'étape 8 a réussi (3 tours propres à un plafond bas), une voiture seule, main sur STOP. La carte de la
+caméra n'a pas encore de zone des stands : gare la voiture sur l'aiguillage d'entrée des stands, lis son `s` dans
+`curl -s localhost:8130/api/state` (`positions.cars`), fais de même à la sortie, et entre les deux en pourcentage
+(`s` × 100) dans les Réglages du cerveau (**Zone des stands**). Active le mode carburant et la voie des stands de la CU.
+
+- [ ] Réglages → **Cerveau de course** : pilote *Vitesse en virage (carte)* avec le plafond validé à l'étape 8,
+  changements de voie **Alterne les voies** tous les 1 tour, arrêts au stand **Pas d'arrêt** pour l'instant.
+  Enregistre, passe la voiture en Auto.
+- [ ] **Changements de voie**, 5 tours. RÉUSSI : un changement par tour, chaque fois à un aiguillage, la pastille dit
+  « Change de voie (à chaque tour) » juste avant, aucun changement ailleurs, et la voiture ne prend jamais d'elle-même
+  la voie des stands. Un changement un aiguillage trop tard veut dire que la demande est arrivée trop tard : monte
+  **Demander jusqu'à … m avant l'aiguillage** de 0,5 m (2 par défaut) et recommence ; note la valeur qui marche.
+- [ ] **Arrêt au stand** : Réglages → **Au stand maintenant** (quel que soit le réglage des arrêts). RÉUSSI : la pastille
+  dit « Arrêt au stand ce tour », la voiture prend la voie des stands à la prochaine entrée, roule lentement (gaz 4
+  dans la voie des stands), s'arrête, la jauge d'essence remonte à 15 (« Ravitaillement »), puis elle repart et
+  continue. Si l'essence ne remonte pas, elle repart quand même après 12 s : note-le (la façon dont la vraie CU
+  ravitaille n'est pas encore vérifiée).
+- [ ] Une fois, STOP pendant que la voiture est arrêtée dans la voie des stands. RÉUSSI : elle reste à 0 ; une fois le
+  STOP levé, elle finit son arrêt et repart.
+
 ## 9. Trois captures de calibration
 
 Elles donnent les vrais chiffres du moteur ; le modèle du simulateur n'est qu'une estimation. Lance l'**Enregistrement**
@@ -246,6 +268,7 @@ chaude.
 | Détection | plus de 95 % des images où la voiture est visible | plus de lumière, exposition verrouillée, fond piste vide ; envoie l'enregistrement |
 | Identité | 0 échange sur 20 tours | envoie l'enregistrement ; pas d'autopilote à plusieurs voitures |
 | Pilote automatique | 3 tours propres à chaque plafond, temps au tour en baisse | retour au Rythme cible ; envoie l'enregistrement |
+| Cerveau de course | un changement de voie par tour, à un aiguillage ; un arrêt au stand avec l'essence revenue à 15 | changements de voie et arrêts coupés ; envoie le journal et l'enregistrement |
 
 ## Dépannage
 

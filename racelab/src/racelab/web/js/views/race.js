@@ -2,7 +2,7 @@
 import {
   GATE_LABEL, STATE_CHIP, STATE_LABEL, clock, gap, h, inkOn, lapTime, s, setText, toggle, wallTime,
 } from "../dom.js";
-import { t } from "../i18n.js";
+import { t, tOr } from "../i18n.js";
 import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
 import { FuelGauge, Fader, fillConnectors, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
 import { ConnectChooser } from "./connect.js";
@@ -570,6 +570,10 @@ class BotCard {
       if (bot.profile?.kind === "corners" && bot.drive) {
         note.push(h(`div.chip.${bot.drive === "map" ? "info" : "caution"}`, { text: t(`bot.drive.${bot.drive === "map" ? "map" : "pace"}`), style: { marginTop: "4px" } }));
       }
+      // race brain: what it is doing, and why it cannot do more (i18n key + args from the server)
+      if (bot.profile?.kind === "brain" && bot.brain) {
+        note.push(h(`div.chip.${bot.brain.intent_args?.why ? "caution" : "info"}`, { text: brainIntent(bot.brain, state), style: { marginTop: "4px" } }));
+      }
     }
     else if (driver === "api") note = [h("span", { text: bot.agent ? t("bot.agent", { name: bot.agent }) : t("bot.agent_waiting") })];
     else note = [h("span.faint", { text: bot.requested !== bot.throttle ? t("bot.requested", { n: bot.requested }) : t(HOVER.matches ? "bot.keyboard_hint" : "bot.slide_hint") })];
@@ -628,7 +632,21 @@ function profileText(p) {
   if (p.kind === "target") return `${label} · ${lapTime(p.target_ms)}`;
   if (p.kind === "rival") return `${label} · #${(p.rival_slot ?? 0) + 1} ${p.margin_pct >= 0 ? "+" : ""}${t("fmt.pct", { v: p.margin_pct })}`;
   if (p.kind === "corners") return `${label} · ${p.a_lat} m/s² · ${t("bot.cap", { n: p.cap })}`;
+  if (p.kind === "brain") return [label, pilotLabel(p.pilot), t(`brain.lane.${p.lane?.policy}`), t(`brain.pit.${p.pit?.policy}`)].join(" · ");
   return label;
+}
+
+// the brain's pilots come from meta.pilots (a registry on the server): never a hard-coded list here
+function pilotLabel(name) {
+  const p = (store.meta?.pilots || []).find((x) => x.name === name);
+  return p ? tOr(p.label_key, p.label) : name;
+}
+
+function brainIntent(b, state) {
+  const args = { ...(b.intent_args || {}) };
+  if (args.slot != null) args.name = state.cars.find((c) => c.slot === args.slot)?.name || t("bot.slot", { n: args.slot + 1 });
+  const text = t(b.intent_key, args);
+  return args.why ? `${text} · ${t(args.why)}` : text;
 }
 
 // ------------------------------------------------------------ profile settings
@@ -637,7 +655,8 @@ function openProfileDrawer(slot, current) {
   const profiles = store.meta?.profiles || {};
   let kind = current?.kind || "constant";
   const values = {};
-  for (const [k, p] of Object.entries(profiles)) values[k] = { ...p.defaults, ...(current?.kind === k ? current : {}) };
+  // deep copies: the editors change nested values (map points, brain sections), never meta's defaults
+  for (const [k, p] of Object.entries(profiles)) values[k] = structuredClone({ ...p.defaults, ...(current?.kind === k ? current : {}) });
   const form = h("div", { style: { display: "flex", flexDirection: "column", gap: "16px" } });
   const seg = Segmented(Object.entries(profiles).map(([k, p]) => ({ value: k, label: profileKindLabel(k) })), kind, (k) => {
     kind = k;
@@ -700,15 +719,19 @@ function openProfileDrawer(slot, current) {
         num(t("profile.start"), "start", { min: 0, max: 15 }), num(t("profile.min"), "min_value", { min: 0, max: 15 }), num(t("profile.max"), "max_value", { min: 0, max: 15 })));
     }
     if (kind === "map") fields.push(mapEditor(v));
-    fields.push(h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" } },
-      num(t("profile.lane_every"), "lane_every", { min: 0, max: 50 }),
-      num(t("profile.ramp"), "ramp_s", { min: 0, max: 5 })));
+    if (kind === "brain") fields.push(brainEditor(v, slot, current));
+    else {
+      fields.push(h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" } },
+        num(t("profile.lane_every"), "lane_every", { min: 0, max: 50 }),
+        num(t("profile.ramp"), "ramp_s", { min: 0, max: 5 })));
+    }
     const desc = {
       constant: t("profile.desc.constant"),
       target: t("profile.desc.target"),
       map: t("profile.desc.map"),
       rival: t("profile.desc.rival"),
       corners: t("profile.desc.corners"),
+      brain: t("profile.desc.brain"),
     }[kind];
     form.replaceChildren(seg.el, h("p.dim", { text: desc, style: { margin: 0 } }), ...fields);
   }
@@ -718,6 +741,91 @@ function openProfileDrawer(slot, current) {
     { label: t("common.cancel") },
     { label: t("common.save"), primary: true, run: () => run("bot.profile", { slot, profile: { ...values[kind], kind } }, t("profile.saved")) },
   ]);
+}
+
+const LANE_POLICIES = ["keep", "fastest", "overtake", "alternate"];
+const PIT_POLICIES = ["off", "auto", "now"];
+const GRID = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" };
+
+// Race brain: pilot (from meta.pilots), lane policy, pit policy and their few parameters, plus the
+// two one-shot test requests (they act on the running brain at once, timed by it)
+function brainEditor(v, slot, current) {
+  const pilots = store.meta?.pilots || [];
+  const box = h("div", { style: { display: "flex", flexDirection: "column", gap: "14px" } });
+  const field = (label, control) => h("label.field", {}, h("span", { text: label }), control);
+  const select = (options, value, onChange) => {
+    const sel = h("select.input", {}, options.map((o) => h("option", { value: o.value, text: o.label, disabled: !!o.disabled, title: o.title || "" })));
+    sel.value = value;
+    sel.addEventListener("change", () => onChange(sel.value));
+    return sel;
+  };
+  // a number of obj[key], shown × scale (ms shown in s), clamped to [min, max]
+  const number = (obj, spec, label) => {
+    const scale = spec.scale ?? 1;
+    const show = (x) => String(Math.round(x * scale * 1000) / 1000);
+    const input = h("input.input.num", { value: show(obj[spec.key]), inputmode: "decimal" });
+    input.addEventListener("change", () => {
+      const x = parseFloat(input.value.replace(",", "."));
+      if (Number.isFinite(x)) {
+        const y = Math.max(spec.min, Math.min(spec.max, x)) / scale;
+        obj[spec.key] = spec.whole ? Math.round(y) : y;
+      }
+      input.value = show(obj[spec.key]);
+    });
+    return field(label, input);
+  };
+  // pit zone override, in % of the lap from the line; both empty = the map's
+  const zone = () => {
+    const at = (i) => {
+      const input = h("input.input.num", { value: v.pit.zone ? String(Math.round(v.pit.zone[i] * 1000) / 10) : "", inputmode: "decimal", placeholder: "–" });
+      input.addEventListener("change", () => {
+        const x = parseFloat(input.value.replace(",", "."));
+        const z = v.pit.zone ? [...v.pit.zone] : [null, null];
+        z[i] = Number.isFinite(x) ? Math.max(0, Math.min(99.9, x)) / 100 : null;
+        v.pit.zone = z[0] != null && z[1] != null ? z : (z[0] == null && z[1] == null ? null : z);
+      });
+      return field(t(i ? "brain.param.zone_out" : "brain.param.zone_in"), input);
+    };
+    return h("div", {}, h("div.faint", { text: t("brain.param.zone"), style: { marginBottom: "6px" } }), h("div", { style: GRID }, at(0), at(1)));
+  };
+  const render = () => {
+    const pilot = pilots.find((p) => p.name === v.pilot);
+    const pilotSel = select(pilots.map((p) => ({
+      value: p.name, disabled: !p.available, title: p.reason || "",
+      label: p.available ? tOr(p.label_key, p.label) : t("brain.pilot_unavailable", { name: tOr(p.label_key, p.label) }),
+    })), v.pilot, (name) => {
+      v.pilot = name;
+      v.pilot_params = { ...(pilots.find((p) => p.name === name)?.defaults || {}) };
+      render();
+    });
+    const lane = [], pit = [];
+    if (v.lane.policy === "alternate") lane.push(number(v.lane, { key: "every", min: 1, max: 50, whole: true }, t("brain.param.every")));
+    if (v.lane.policy === "overtake") lane.push(number(v.lane, { key: "gap_m", min: 0.1, max: 5 }, t("brain.param.gap_m")));
+    if (v.lane.policy !== "keep") {
+      lane.push(number(v.lane, { key: "d_max_m", min: 0.5, max: 10 }, t("brain.param.d_max_m")),
+        number(v.lane, { key: "latency_s", min: 0, max: 1 }, t("brain.param.latency_s")));
+    }
+    if (v.pit.policy === "auto") pit.push(number(v.pit, { key: "reserve_laps", min: 0, max: 10 }, t("brain.param.reserve_laps")));
+    if (v.pit.policy !== "off") pit.push(number(v.pit, { key: "throttle", min: 1, max: 15, whole: true }, t("brain.param.throttle")));
+    const live = current?.kind === "brain";
+    const ask = (request, done) => run("bot.brain", { slot, request }, t(done)).catch(() => {});
+    box.replaceChildren(...[
+      field(t("brain.pilot"), pilotSel),
+      h("div", { style: GRID }, ...(pilot?.params || []).map((spec) => number(v.pilot_params, spec, tOr(spec.label_key, spec.key)))),
+      field(t("brain.lanes"), select(LANE_POLICIES.map((x) => ({ value: x, label: t(`brain.lane.${x}`) })), v.lane.policy, (x) => { v.lane.policy = x; render(); })),
+      lane.length ? h("div", { style: GRID }, ...lane) : null,
+      field(t("brain.pits"), select(PIT_POLICIES.map((x) => ({ value: x, label: t(`brain.pit.${x}`) })), v.pit.policy, (x) => { v.pit.policy = x; render(); })),
+      pit.length ? h("div", { style: GRID }, ...pit) : null,
+      v.pit.policy !== "off" ? zone() : null,
+      h("div.field", {}, h("span", { text: t("brain.tests") }),
+        h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
+          h("button.btn.sm", { disabled: !live, onclick: () => ask("pit", "brain.pit_now_sent") }, t("brain.pit_now")),
+          h("button.btn.sm", { disabled: !live, onclick: () => ask("lane", "brain.lane_now_sent") }, t("brain.lane_now"))),
+        h("span.faint", { text: t(live ? "brain.tests_hint" : "brain.tests_save_first") })),
+    ].filter(Boolean));
+  };
+  render();
+  return box;
 }
 
 function mapEditor(v) {

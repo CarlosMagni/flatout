@@ -28,6 +28,14 @@ class Context:
     pos: dict[str, Any] | None = None
     # track shape (state["positions"] companion: meta.track / track.set), None = unknown
     geometry: dict[str, Any] | None = None
+    # race state, for the race brain (bots/brain.py); the other profiles ignore it
+    fuel: int | None = None  # own tank, 0..15 (cars[].fuel), None = unknown
+    in_pit: bool = False  # own car in the pit lane (cars[].pit, the CU's flag)
+    fuel_mode: bool = False  # cu.fuel_mode
+    pit_lane: bool = False  # cu.pit_lane
+    session_laps: int | None = None  # laps this car must complete (lap-target session), else None
+    remaining_s: float | None = None  # time left in a timed session (session.remaining_s), else None
+    others: list[dict[str, Any]] = field(default_factory=list)  # the other cars' fresh positions
 
 
 @dataclass

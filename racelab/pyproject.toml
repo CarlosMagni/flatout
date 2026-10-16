@@ -25,6 +25,7 @@ dependencies = [
     "aiohttp >= 3.9",
     "bleak >= 3.0",
     "pyserial >= 3.5",
+    "numpy",            # the predictive (MPC) pilot of the race brain
 ]
 
 [project.optional-dependencies]

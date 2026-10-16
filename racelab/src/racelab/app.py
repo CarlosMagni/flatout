@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from . import __version__
 from .bots.manager import BotManager
+from .bots.brain import pilots_meta
 from .bots.profiles import PROFILE_LABELS, PROFILES
 from .config import Config, apply_connection_choice, save_overrides
 from .cu.firmware import FirmwareLibrary, ImageError, build_images, can_build, missing_images
@@ -486,6 +487,7 @@ class RaceLabApp:
             "session": self.engine.settings.to_dict(),
             "profiles": {k: {"label": PROFILE_LABELS[k], "defaults": PROFILES[k]().to_dict()}
                          for k in PROFILES},
+            "pilots": pilots_meta(),  # race brain: the driving models, in the UI's selector order
             "buttons": list(BUTTONS),
             "drivers": [dataclasses.asdict(d) for d in self.cfg.drivers],
             "safety": dataclasses.asdict(self.cfg.safety),
@@ -686,6 +688,9 @@ class RaceLabApp:
 
     def _op_bot_lane(self, args, client):
         self.bots.lane(int(args["slot"]))
+
+    def _op_bot_brain(self, args, client):
+        self.bots.brain_request(int(args["slot"]), str(args.get("request", "")))
 
     def _op_bot_profile(self, args, client):
         result = self.bots.set_profile(int(args["slot"]), args["profile"])
@@ -1220,6 +1225,7 @@ class RaceLabApp:
         "bot.throttle": _op_bot_throttle,
         "bot.lane": _op_bot_lane,
         "bot.profile": _op_bot_profile,
+        "bot.brain": _op_bot_brain,
         "bot.claim": _op_bot_claim,
         "bot.act": _op_bot_act,
         "bot.unclaim": _op_bot_unclaim,

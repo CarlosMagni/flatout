@@ -2,7 +2,7 @@
 
 A bot slot has a driver:
 - `manual`  : the UI slider (like a controller);
-- `profile` : a local autopilot (bots/profiles.py);
+- `profile` : a local autopilot (bots/profiles.py, the race brain in bots/brain.py);
 - `api`     : an external (RL) agent via the API, with a dead-man switch.
 
 The requested throttle goes through the safety gates before reaching the link
@@ -69,6 +69,8 @@ class BotManager:
         self._session_state = "idle"
         self._phase = 0
         self._fuel_mode = False
+        self._session: dict[str, Any] = {}
+        self._cu: dict[str, Any] = {}
         self._cars: dict[int, dict[str, Any]] = {}
         self._positions: dict[str, Any] | None = None  # state["positions"], as last given to tick()
         self._geometry: dict[str, Any] | None = None
@@ -121,6 +123,13 @@ class BotManager:
             raise ValueError("lane change: the slot is not a bot")
         self._link.lane(slot)
         s.lane_pending_until = self._clock() + 0.3
+
+    def brain_request(self, slot: int, what: str) -> None:
+        """Race brain one-shot ("pit" or "lane"): timed by the brain, sent through the lane path above."""
+        s = self._slot(slot)
+        if s.driver != "profile" or s.profile.kind != "brain":
+            raise ValueError("this car is not driven by the race brain (Auto with the Race brain profile)")
+        s.profile.request(what)
 
     def estop(self) -> None:
         """Throttle 0 everywhere. API agents lose their claim: after the E-STOP is
@@ -204,9 +213,11 @@ class BotManager:
         CU or a track connector; they are optional, profiles must work without them."""
         now = self._clock()
         self._positions, self._geometry, self._positions_at = positions, geometry, now
-        self._session_state = engine_snapshot["session"]["state"]
-        self._phase = engine_snapshot["cu"]["phase"]
-        self._fuel_mode = bool(engine_snapshot["cu"].get("fuel_mode"))
+        self._session = engine_snapshot["session"]
+        self._session_state = self._session["state"]
+        self._cu = engine_snapshot["cu"]
+        self._phase = self._cu["phase"]
+        self._fuel_mode = bool(self._cu.get("fuel_mode"))
         self._cars = {c["slot"]: c for c in engine_snapshot["cars"]}
         if self._reconnected:
             # docs/bot-protocol.md §1: after an outage, throttle 0 before resuming
@@ -238,9 +249,17 @@ class BotManager:
             best = sorted(ms for ms in rival.get("recent") or [] if ms)[:3]
             if best:
                 rival_ms = sum(best) / len(best)
+        fresh = self._fresh_positions(now)
+        laps_target = self._session.get("laps")
+        if laps_target is not None and self._session_state == "finishing":
+            laps_target = car.get("laps", 0) + 1  # the leader is in: this lap is the car's last
         ctx = Context(now=now, since_cross_s=None if since is None else since / 1000,
                       laps=car.get("laps", 0), rival_lap_ms=rival_ms,
-                      pos=self._own_position(s.slot, now), geometry=self._geometry)
+                      pos=next((c for c in fresh if c["slot"] == s.slot), None), geometry=self._geometry,
+                      fuel=car.get("fuel"), in_pit=bool(car.get("pit")),
+                      fuel_mode=self._fuel_mode, pit_lane=bool(self._cu.get("pit_lane")),
+                      session_laps=laps_target, remaining_s=self._session.get("remaining_s"),
+                      others=[c for c in fresh if c["slot"] != s.slot])
         try:
             return s.profile.output(ctx)
         except Exception:
@@ -248,19 +267,16 @@ class BotManager:
             logger.exception("profile of slot %d failed: throttle 0", s.slot)
             return 0
 
-    def _own_position(self, slot: int, now: float) -> dict[str, Any] | None:
-        """The slot's published position, or None when unknown or stale (profiles then fall back)."""
+    def _fresh_positions(self, now: float) -> list[dict[str, Any]]:
+        """The published positions, [] when missing or stale (profiles then fall back)."""
         feed = self._positions
         if not feed or feed.get("stale"):
-            return None
+            return []
         age = feed.get("age_ms", 0) + (now - self._positions_at) * 1000
         if age > POS_MAX_AGE_MS:
-            return None
-        for c in feed.get("cars") or []:
-            if c.get("slot") == slot:
-                return {"s": c.get("s"), "lane": c.get("lane", 0), "v": c.get("v"),
-                        "off": bool(c.get("off")), "age_ms": age}
-        return None
+            return []
+        return [{"slot": c.get("slot"), "s": c.get("s"), "lane": c.get("lane", 0), "v": c.get("v"),
+                 "off": bool(c.get("off")), "age_ms": age} for c in feed.get("cars") or []]
 
     def _gate(self, s: BotSlot, now: float) -> str | None:
         if self.estopped:
@@ -317,6 +333,7 @@ class BotManager:
                 "gate": s.gate if s.driver else None,
                 "profile": s.profile.to_dict(),
                 "drive": getattr(s.profile, "source", None),  # corners profile: "map" or "pace"
+                "brain": getattr(s.profile, "status", None),  # race brain: intent, policies, next move
                 "agent": s.agent,
                 "api_age_ms": round((now - s.api_last) * 1000) if s.driver == "api" else None,
                 "lane_pending": now < s.lane_pending_until,

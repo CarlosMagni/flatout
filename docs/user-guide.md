@@ -97,9 +97,10 @@ All the configuration is documented in
   [Auto driver profiles](#auto-driver-profiles); it waits for the race to start),
   **Manual** (0–15 fader with a safety detent above 12) or **API** (an external agent). The Lane button
   = lane change at the next switch. **Back to normal** hands every car back.
-- The autopilots do not handle pit stops yet: in the CU's fuel mode, a bot
-  runs dry (flagged as out of fuel; bring it in with Lane at the pit
-  entrance, or turn off the CU's fuel mode for long sessions with bots).
+- Pit stops: only the **Race brain** profile goes to refuel by itself (see
+  [Race brain](#race-brain)). With the other profiles, in the CU's fuel mode a bot
+  runs dry (flagged as out of fuel; bring it in with Lane at the pit entrance,
+  or turn off the CU's fuel mode for long sessions with bots).
 - `STOP` (or `Esc`): emergency stop, throttle 0 on every bot. It works from every
   screen, also with a drawer or a dialog open (`Esc` closes it and stops). It can
   only be cleared with the mouse; `Esc` while it is on only says so.
@@ -116,6 +117,7 @@ The profile of an **Auto** car is chosen in **Settings** (the gear next to the s
 | Throttle map | A throttle per portion of the lap (straights, corners), timed from the last line crossing. |
 | Rival | Follows another driver's pace, with a margin. |
 | Corner speed (map) | Drives from the car **positions** and the track **shape** (see below). |
+| Race brain | Drives with Corner speed or Target pace, and also changes lane and pits for fuel by itself (see [Race brain](#race-brain)). |
 
 **Corner speed (map)** ("AI driver v1") needs the car positions and the track shape. The virtual
 CU provides both; on a real track a [track connector](api.md#track-connector-track-shape--positions)
@@ -142,6 +144,36 @@ Settings: **Grip at start** (m/s², lateral acceleration assumed in corners: low
 careful, the learning raises it corner by corner; 8-12 is a good start for the virtual CU),
 **Margin** (%, taken off every target speed), **Throttle cap** (the highest throttle the profile
 ever sends; the global `max_throttle` of the safety settings still applies on top).
+
+## Race brain
+
+**Race brain** is an Auto profile that adds decisions to a driving profile. In **Settings** you pick:
+
+- **Pilot**: the driving model, *Corner speed (map)* (default) or *Target pace*, with its few settings
+  (the list comes from the app, so a new pilot shows up there by itself). Keep the cap low for a first
+  real run, as with Corner speed.
+- **Lane changes**: *Keeps its lane*; *Fastest lane* (times both lanes on clean laps, then keeps the
+  faster one if it is at least 2 % faster); *Overtakes* (changes lane behind a slower car closer than
+  the set distance, only if the other lane is free alongside, otherwise like Fastest lane);
+  *Alternates lanes* (every N laps, for tests).
+- **Pit stops**: *No pit stop*; *Pits when low* (it measures the fuel used per lap and pits when the
+  fuel left after the next lap would be under the reserve, 2 laps by default; never in the last lap of
+  a race, never when the tank is enough to finish, never twice within 5 laps); *Pits once, at once*.
+  In the pit lane it drives at the **pit lane throttle**, stops in the middle of the pit zone until the
+  tank is full, then leaves. It needs the CU's **fuel mode** and **pit lane** on.
+- **Pit zone**: entry and exit in % of the lap from the line, only if the track map has no pit zone (a
+  camera map does not have one yet: park the car at the pit entry and read its `s` in the API state).
+
+Lane changes and pit stops need **live positions** (the virtual CU, or a camera connector with the
+cars' speed) and a track map in metres with its lane changers. The brain sends each request between
+about 2 m and 1 m before the changer or the pit entry (closer when slower), once per pass, never from
+the pit lane; without positions it only drives (like Corner speed without positions) and never guesses.
+The car's chip says what it is doing ("Pit stop this lap (fuel 3/15)", "Lane 1 is faster"…) and, when
+it cannot, why ("needs live positions (camera)").
+
+For tests, **Pit now** and **Change lane at the next changer** (in the same Settings) send one request
+to the running brain, timed like its own. The STOP button, the session state and a lost link still cut
+the car whatever the brain plans, also while it is stopped in the pits.
 
 ## The other screens
 

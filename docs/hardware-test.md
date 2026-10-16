@@ -187,6 +187,26 @@ E-STOP passed. Open the Settings of the Auto car (the gear next to its switch) a
 - [ ] The learned corner factors reset at the next session, after STOP, and when the profile is saved again: do not
   save the profile between laps if you want to watch the learning.
 
+## 8b. The race brain: lane changes on purpose, then one pit stop
+
+Prerequisite: step 8 passed (3 clean laps at a low cap), one car alone, hand on STOP. The camera map has no pit zone
+yet: park the car on the pit entry switch, read its `s` in `curl -s localhost:8130/api/state` (`positions.cars`), do
+the same at the pit exit, and enter both as percentages (`s` × 100) in the brain's Settings (**Pit zone**). Turn the CU's fuel mode and pit
+lane on.
+
+- [ ] Settings → **Race brain**: pilot *Corner speed (map)* with the cap that passed in step 8, lane changes
+  **Alternates lanes** every 1 lap, pit stops **No pit stop** for now. Save, switch the car to Auto.
+- [ ] **Lane changes**, 5 laps. PASS: one change per lap, each at a lane changer, the chip says "Changing lane (every
+  lap)" just before, no change anywhere else, and the car never takes the pit lane by itself. A change one changer
+  late means the request reached the car too late: raise **Ask up to … m before the changer** by 0.5 m (default 2) and
+  repeat; note the value that works.
+- [ ] **Pit stop**: Settings → **Pit now** (any pit setting). PASS: the chip says "Pit stop this lap", the car takes the
+  pit lane at the next pit entry, drives in slowly (pit lane throttle 4), stops, the fuel gauge climbs back to 15
+  ("Refuelling"), then it leaves and laps on. If the fuel does not rise, it leaves after 12 s anyway: note it (how the
+  real CU refuels is not verified yet).
+- [ ] Once, STOP while the car is stopped in the pit lane. PASS: it stays at 0; after clearing STOP it ends its stop and
+  leaves.
+
 ## 9. Three calibration captures
 
 They give the real motor numbers; the simulator's model is only a guess. Start trackloc **Record** for each (it
@@ -229,6 +249,7 @@ For each: the car, the battery or power level, and whether the car was cold (fir
 | Detection | more than 95 % of the frames where the car is visible | more light, locked exposure, empty-track background; send the recording |
 | Identity | 0 swaps over 20 laps | send the recording; no several-car autopilot |
 | Autopilot | 3 clean laps at each cap, lap times trending down | back to Target pace; send the recording |
+| Race brain | one lane change per lap, at a changer; one pit stop with the fuel back at 15 | lane changes and pit stops off; send the log and the recording |
 
 ## Troubleshooting
 

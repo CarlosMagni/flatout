@@ -300,6 +300,15 @@ autopilot; Auto), `api` (external agent; AI). Safety:
 - `tick(snapshot, positions, geometry)`: profiles get their own car's `positions` (None when
   missing or older than 500 ms) and the track shape in `Context`, and must work without them
   (the `corners` profile falls back to the target pace);
+- `Context` also carries the race state the race brain uses (the other profiles ignore it):
+  `fuel` (own `cars[].fuel`), `in_pit` (`cars[].pit`), `fuel_mode` / `pit_lane` (`cu`),
+  `session_laps` (the lap count of a lap-target session; once it is `finishing`, the car's current
+  lap), `remaining_s` (timed session) and `others` (the other cars' fresh positions);
+- the race brain (`bots/brain.py`, profile kind `brain`, see [api.md](api.md#race-brain-profile-brain))
+  wraps a pilot from its `PILOTS` registry and adds a lane planner, a pit planner and an arbiter
+  behind the gates above. It asks for a lane change through the same path as the other profiles
+  (`take_lane_request()` → `link.lane`), only while its car has a non-zero throttle; `brain_request()`
+  (op `bot.brain`) is its one-shot test entry. `bots/__init__.py` imports it, which registers the kind;
 - on reconnection: throttle 0 on every bot slot (the link does it before any
   other command), then the drivers resume;
 - on shutdown: throttle 0 then `A` (if `release_on_exit`).
