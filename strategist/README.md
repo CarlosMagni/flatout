@@ -28,9 +28,10 @@ this package implements the headless training environment and the first PPO stra
   fuel per lap, laps of fuel left, lane, last clean lap per lane, gaps and speeds ahead (same
   and other lane) and behind, whether the other lane is free at the next changer, stops, in
   pit, race position, whether a pit stop is allowed (`pit.min_laps` spacing).
-- **Reward**: a small pace shaping on each clean lap, then the race result — position and
-  laps completed, minus running dry (−0.5) and off-tracks (−0.15 each). The rule brain is
-  the baseline to beat; the environment is deterministic per seed.
+- **Reward**, summed per lap: a pace shaping on each clean lap plus the *current* position
+  and progress (dense: the learner reacts every lap); penalties: running dry — the tank
+  emptied without a stop — −2.0, off-tracks −0.15 each (capped). The rule brain is the
+  baseline to beat; the environment is deterministic per seed.
 
 ## Running it
 

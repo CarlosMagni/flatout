@@ -183,7 +183,10 @@ def train(args) -> Path:
     profile = {"kind": "brain", "pilot": args.pilot, "pilot_params": pilot_params,
                "lane": {"policy": "keep"}, "pit": {"policy": "off", "min_laps": 5}} if args.pilot \
         else DEFAULT_PROFILE
-    params = init_params(seed=args.seed)
+    if args.init:
+        params = dict(np.load(args.init))  # warm start from a checkpoint
+    else:
+        params = init_params(seed=args.seed)
     model = _torch_model(params)
     rng = np.random.default_rng(args.seed)
     curve = (out / "curve.csv").open("w", newline="")
@@ -238,6 +241,7 @@ def main() -> int:
     ap.add_argument("--pilot-params", default="{}",
                     help="pilot JSON, e.g. '{\"a_lat\": 18.0}' (calibrate for the track!)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--init", default=None, help="warm-start checkpoint (.npz)")
     ap.add_argument("--ref-lap-ms", type=float, default=6000.0)
     ap.add_argument("--out", default="out/train")
     ap.add_argument("--quick", action="store_true", help="2 updates, 2 workers: a smoke run")

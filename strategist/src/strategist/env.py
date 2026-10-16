@@ -207,7 +207,7 @@ class RaceEnv:
             self._last_cross = self.sim.t
         if self.fuel_mode and self.car.fuel <= 0 and not self._dry:
             self._dry = True
-            self._reward -= 0.5
+            self._reward -= 2.0
         if self.car.off and not self._was_off and self._offs < 3:
             self._offs += 1
             self._reward -= 0.15
