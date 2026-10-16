@@ -320,6 +320,11 @@ class Preview:
             self.frames += 1
             self._arrivals.append(time.monotonic() if t is None else t)
 
+    def set_model(self, model: MapModel | None) -> None:
+        """Draw this map's lanes from now on (a map just built by `serve`)."""
+        self._model_cache = None
+        self.model = model
+
     def measured_fps(self) -> float | None:
         with self._lock:
             a = list(self._arrivals)
@@ -540,42 +545,41 @@ def page(nonce: str) -> str:
 
 # ----------------------------------------------------------------------------- the server
 
-def make_app(preview: Preview) -> web.Application:
-    """GET only: `/` (the page), `/stream` (MJPEG), `/status` (JSON). Nothing here can drive anything."""
+def check_request(request: web.Request) -> web.Response | None:
+    """The guards every page of ours applies (also `serve`'s): the Host must be a loopback name of OUR port (DNS
+    rebinding), and a request the browser flags cross-site, or whose Origin is not ours, is refused. None: fine."""
+    allowed = request.app[ALLOWED_HOSTS]
+    if request.headers.get("Host", "").lower() not in allowed:  # DNS rebinding: a page on evil.example resolving to 127.0.0.1
+        return web.Response(status=421, text="unexpected Host")
+    if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
+        return web.Response(status=403, text="cross-site request refused")
+    origin = request.headers.get("Origin")
+    if origin is not None and origin.lower() not in {f"http://{h}" for h in allowed}:
+        return web.Response(status=403, text="cross-origin request refused")
+    return None
 
-    @web.middleware
-    async def guard(request: web.Request, handler: Any) -> web.StreamResponse:
-        if request.method != "GET":
-            return web.Response(status=405, headers={"Allow": "GET"}, text="GET only")
-        allowed = request.app[ALLOWED_HOSTS]
-        if request.headers.get("Host", "").lower() not in allowed:  # DNS rebinding: a page on evil.example resolving to 127.0.0.1
-            return web.Response(status=421, text="unexpected Host")
-        if request.headers.get("Sec-Fetch-Site", "same-origin") not in ("same-origin", "none"):
-            return web.Response(status=403, text="cross-site request refused")
-        origin = request.headers.get("Origin")
-        if origin is not None and origin.lower() not in {f"http://{h}" for h in allowed}:
-            return web.Response(status=403, text="cross-origin request refused")
-        return await handler(request)
 
-    async def add_headers(request: web.Request, response: web.StreamResponse) -> None:
-        response.headers.setdefault("Content-Security-Policy", csp("'none'"))  # the page sets its own, with its nonce
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
-        response.headers["Referrer-Policy"] = "no-referrer"
+def allow_loopback(app: web.Application, port: int) -> None:
+    """The Host values this app answers to, once its port is known (127.0.0.1, localhost, ::1)."""
+    app[ALLOWED_HOSTS].update({f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"})
 
-    def csp(src: str) -> str:
-        return (f"default-src 'none'; img-src 'self'; connect-src 'self'; script-src {src}; style-src {src}; "
-                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
-    async def index(request: web.Request) -> web.Response:
-        nonce = secrets.token_urlsafe(16)
-        return web.Response(text=page(nonce), content_type="text/html", charset="utf-8",
-                            headers={"Content-Security-Policy": csp(f"'nonce-{nonce}'")})
+def csp(src: str) -> str:
+    return (f"default-src 'none'; img-src 'self'; connect-src 'self'; script-src {src}; style-src {src}; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
-    async def status(request: web.Request) -> web.Response:
-        return web.json_response(preview.status())
+
+async def add_headers(request: web.Request, response: web.StreamResponse) -> None:
+    response.headers.setdefault("Content-Security-Policy", csp("'none'"))  # the page sets its own, with its nonce
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Referrer-Policy"] = "no-referrer"
+
+
+def stream_handler(preview: Preview, state: dict[str, Any]) -> Callable[[web.Request], Any]:
+    """The MJPEG `/stream` handler; `state` = {"streams": n, "closing": bool} (shared with the app's shutdown hook)."""
 
     async def stream(request: web.Request) -> web.StreamResponse:
         if state["streams"] >= MAX_STREAMS:
@@ -598,6 +602,26 @@ def make_app(preview: Preview) -> web.Application:
             state["streams"] -= 1
         return resp
 
+    return stream
+
+
+def make_app(preview: Preview) -> web.Application:
+    """GET only: `/` (the page), `/stream` (MJPEG), `/status` (JSON). Nothing here can drive anything."""
+
+    @web.middleware
+    async def guard(request: web.Request, handler: Any) -> web.StreamResponse:
+        if request.method != "GET":
+            return web.Response(status=405, headers={"Allow": "GET"}, text="GET only")
+        return check_request(request) or await handler(request)
+
+    async def index(request: web.Request) -> web.Response:
+        nonce = secrets.token_urlsafe(16)
+        return web.Response(text=page(nonce), content_type="text/html", charset="utf-8",
+                            headers={"Content-Security-Policy": csp(f"'nonce-{nonce}'")})
+
+    async def status(request: web.Request) -> web.Response:
+        return web.json_response(preview.status())
+
     async def on_shutdown(app: web.Application) -> None:
         state["closing"] = True
 
@@ -607,21 +631,22 @@ def make_app(preview: Preview) -> web.Application:
     app.on_response_prepare.append(add_headers)
     app.on_shutdown.append(on_shutdown)
     app.router.add_get("/", index, allow_head=False)
-    app.router.add_get("/stream", stream, allow_head=False)
+    app.router.add_get("/stream", stream_handler(preview, state), allow_head=False)
     app.router.add_get("/status", status, allow_head=False)
     return app
 
 
 async def serve(preview: Preview, port: int = DEFAULT_PORT, stop: threading.Event | None = None,
-                ready: Callable[[str, int], None] | None = None) -> None:
+                ready: Callable[[str, int], None] | None = None, app: web.Application | None = None) -> None:
     """Serve on 127.0.0.1 only (there is deliberately no option for another address) until `stop` is set or cancelled.
-    `ready(host, port)` is called once listening (`port=0` picks a free one)."""
-    app = make_app(preview)
+    `ready(host, port)` is called once listening (`port=0` picks a free one). `app`: another application built from
+    the pieces above (`trackloc serve`); it must keep `ALLOWED_HOSTS`."""
+    app = app if app is not None else make_app(preview)
     runner = web.AppRunner(app, shutdown_timeout=1.0)
     await runner.setup()
     await web.TCPSite(runner, LOCALHOST, port).start()
     actual = runner.addresses[0][1]
-    app[ALLOWED_HOSTS].update({f"127.0.0.1:{actual}", f"localhost:{actual}", f"[::1]:{actual}"})
+    allow_loopback(app, actual)
     if ready:
         ready(LOCALHOST, actual)
     try:

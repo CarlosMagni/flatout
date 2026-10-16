@@ -88,6 +88,55 @@ macOS asks for the camera permission the first time a terminal runs a camera com
    `python -m trackloc replay <recording> --map track_map.json` prints how far the crossings say
    the positions lag behind, and the `--latency` to use. Map again with it: the finish line depends on it.
 
+## From the browser
+
+Everything above, from one local page: `serve` is the connector's own web page (RaceLab only shows a card that links to it).
+
+```bash
+python -m trackloc serve                      # RaceLab on ws://127.0.0.1:8130/ws; then open the address it prints
+python -m trackloc serve --camera iphone --map track_map.json --lang fr --port 8140
+```
+
+The address ends with `?k=<key>`: the key is new at every start, and the page needs it for every action (open the address
+printed in the terminal, or click the connector card in RaceLab). The page (English / French switch, plain JavaScript, no
+CDN) has:
+
+- **Camera**: the listed devices or a stream URL (`rtsp(s)://` and `http(s)://` only), then *Open the camera*. The live
+  preview with the same overlay as `preview` (marker, resolution, frame rate, coverage, what moves) runs all the time. The
+  **marker size** field is in millimetres (measure the black square), the **latency** field in milliseconds (0 if unknown).
+- **Record** (optional duration), **Map** (car 1-6, throttle 1-8 of 15, one or two lanes, background median or empty
+  track), **Name the cars** (roll call of the cars you tick), **Run** (cars, optional roll call first) and a big **STOP**.
+  Cars are numbered 1-6 as in RaceLab. Map, the roll call and Run with a roll call move cars: the page first asks, for example
+  "A car will run at throttle 4/15: keep a hand on STOP in RaceLab".
+- A **status line** (idle, recording, mapping, identifying, running, error; crossings seen during a map), the last log lines,
+  and a **map summary**: length, lanes, blind zones, how the metres were obtained, and the camera latency still missing
+  from the frame times, estimated from the finish-line crossings when a *Run* ends (a *Use* button copies it to the
+  latency field; map again with it, the finish line depends on it).
+
+How it works and what it guarantees:
+
+- The actions are the commands' own code (`trackloc/actions.py`: `do_record`, `do_map`, `do_identify`, `do_run`), run in a
+  background thread **of the `serve` process, not in the browser**: closing or reloading the tab stops and orphans nothing,
+  and STOP works after a reload (`/status` says what is running). One action at a time (a second one gets HTTP 409). The page
+  owns the one open camera and shares its frames with the preview and the running action.
+- Every refusal and every hand-back of the commands is unchanged: `map` and the roll call drive the cars at a low throttle
+  (the page never asks for more than 8/15), refresh it, and in a `finally` always send throttle 0 and unclaim, on STOP, on
+  an error, on a lost link; the roll call refuses while a session runs, while E-STOP is on or when the CU link is down.
+  **The emergency stop stays in RaceLab**: STOP here ends the action and hands the cars back, it is not an E-STOP.
+  Ctrl-C of `serve` stops the action and waits for that hand-back before the process exits.
+- Security: it listens on `127.0.0.1` only (no option for another address); a `Host` that is not a loopback name of its port
+  gets 421, a cross-site request (`Sec-Fetch-Site`, `Origin`) 403 (the same guards as `preview`); every POST needs the random
+  per-run key in the `X-Trackloc-Token` header (403) and a JSON body (415); a moving action needs `confirm: true`; every
+  value is checked on the server (slots 0-5, throttle 1-8, stream URL schemes, no file path); strict Content-Security-Policy,
+  no cookies, no CORS header.
+- **Connector card.** Once connected to RaceLab, `serve` calls `connector.set` (name "Camera (trackloc)", this page's address,
+  and the status) on a connection of its own that claims nothing, updated on every change; RaceLab clears it when `serve`
+  stops. If RaceLab is not running yet, `serve` keeps retrying (Record then saves video only; the other actions need RaceLab);
+  an older RaceLab that does not know the operation gets one warning in the terminal and no card.
+- Map and recordings go to `~/.racelab/trackloc/serve/<date>-map|record/` (`--out-dir`); `--map FILE` starts with an existing
+  map; `--video FILE` plays a video as the camera (a demo, or to try the page). Texts coming from the actions (errors, the log)
+  are in English.
+
 ## Roll call
 
 Identity normally comes from the CU's finish-line crossings, so parked or bunched cars stay unnamed until each has
@@ -177,3 +226,6 @@ server (virtual CU or no CU), including the safety paths of `map`: normal end, e
 mid-lap, lost connection. The roll call runs closed-loop against a fake CU and the synthetic
 camera on one fake clock (cars that obey the throttle they are sent, dead-man switch included);
 the preview's server is started for real on 127.0.0.1 and queried with a plain HTTP client.
+`serve` is tested through aiohttp's test client (guards, token, 409, the connector card against a fake RaceLab connection
+including an old RaceLab), with a synthetic discovery lap played into the camera and a fake link for the map (end, STOP,
+exception, lost link, shutdown: the car is always handed back), and against a real RaceLab app for the roll call's refusals.

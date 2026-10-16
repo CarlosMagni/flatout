@@ -3,6 +3,7 @@
     probe     list the cameras (resolution, measured fps)
     marker    write the ArUco marker to print (DICT_4X4_50, id 0)
     preview   aim the camera: annotated live view in a browser on 127.0.0.1 (or --snapshot FILE), moves nothing
+    serve     everything below from ONE local web page (camera picker, preview, record, map, identify, run, stop)
     record    record camera + RaceLab events to a folder (the most important one on the first day)
     map       discovery lap: drive a car slowly, record, build the map (or rebuild it from a recording)
     identify  roll call: pulse each slot's car at a low throttle to see which car is which slot (`run --identify`)
@@ -24,14 +25,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .actions import Ctx, TracklocError, do_identify, do_map, do_record, do_run, prepare, slots_of
+
 DEFAULT_URL = "ws://localhost:8130/ws"
-
-
-def _size(text: str | None) -> tuple[int, int] | None:
-    if not text:
-        return None
-    w, h = text.lower().split("x")
-    return int(w), int(h)
 
 
 def _add_camera(p: argparse.ArgumentParser) -> None:
@@ -82,6 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=None, help="stop after this many seconds (default: until Ctrl-C)")
     p.add_argument("--lang", choices=("en", "fr"), default=None, help="language of the terminal text and the picture "
                    "(default: from $LANG; the page has an EN/FR switch)")
+
+    p = sub.add_parser("serve", help="the connector's own local web page: preview, record, map, identify, run (127.0.0.1)")
+    _add_camera(p)
+    p.add_argument("--racelab-url", default="ws://127.0.0.1:8130/ws", help="RaceLab WebSocket (default %(default)s)")
+    p.add_argument("--token", default=None, help="RaceLab API token, if set (not the page's own token, which is random per run)")
+    p.add_argument("--name", default="camera", help="agent name shown as the track source in RaceLab")
+    p.add_argument("--port", type=int, default=8140, help="port on 127.0.0.1 (the page is never served on another address)")
+    p.add_argument("--map", default=None, help="an existing map file to start with (otherwise: the map of the last `Map` button)")
+    p.add_argument("--out-dir", default=None, help="where maps and recordings go (default ~/.racelab/trackloc/serve)")
+    p.add_argument("--lang", choices=("en", "fr"), default=None, help="default language of the page and terminal (the page has an EN/FR switch)")
 
     p = sub.add_parser("record", help="record video + timestamps + RaceLab events")
     _add_camera(p)
@@ -158,97 +164,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 # ----------------------------------------------------------------------------- helpers
 
-def _data_dir(name: str) -> Path:
-    return Path.home() / ".racelab" / "trackloc" / (time.strftime("%Y%m%d-%H%M%S") + "-" + name)
-
-
 def _make_source(args: argparse.Namespace) -> Any:
-    from .sources import CameraSource, FfmpegSource, resolve_camera
+    from .actions import Ctx, open_source
 
-    try:
-        args.camera = resolve_camera(args.camera, ask=input if sys.stdin.isatty() else None)
-    except OSError as e:
-        sys.exit(f"{e}\n(or --video FILE to work offline)")
-    size = _size(args.size)
-    if args.ffmpeg:
-        return FfmpegSource(args.camera, size=size or (1280, 720), fps=args.fps or 30.0, mirror=args.mirror,
-                            rotate=args.rotate, exposure_offset_s=args.exposure_offset)
-    return CameraSource(args.camera, size=size, fps=args.fps, mirror=args.mirror, rotate=args.rotate,
-                        exposure_offset_s=args.exposure_offset).open()
-
-
-def _connect(args: argparse.Namespace) -> Any:
-    from .link_racelab import RaceLabLink
-
-    try:
-        return RaceLabLink(args.racelab_url, args.name, args.token).connect()
-    except (ConnectionError, OSError) as e:
-        sys.exit(f"{e}\nStart RaceLab (`racelab`) first, or use --inputs FILE to work offline.")
-
-
-def format_report(model: Any) -> str:
-    r = model.report
-    lines = ["", "MAP", "---"]
-    lanes = ", ".join(f"lane {ln.lane_id}: {ln.length:.2f} m" for ln in model.lanes)
-    lines.append(f"{lanes}; centre line {model.length_c:.2f} m; lane spacing {model.pitch_m * 100:.1f} cm; metres from: {r['metric']}")
-    lines.append(f"laps used: " + ", ".join(f"{lp['lap']}={lp['kind']} ({lp['length_m']:.2f} m, {lp['time_s']:.1f} s)" for lp in r["laps"]))
-    if not r["marker_found"]:
-        lines.append("WARNING: marker (DICT_4X4_50 id 0) not found in the background: lengths come from the motor model "
-                     "(a guess). Print the marker (`marker`), lay it flat in view and map again, or give --track-length-m.")
-    cal = r.get("perspective_calibration")
-    if cal:
-        lines.append(f"perspective: marker alone gave speed spread {cal['cost_before']:.2f}; "
-                     f"{'tilted by the car motion to ' + format(cal['cost_after'], '.2f') if cal['applied'] else 'kept (no better fit)'}"
-                     " (lower = more constant speed around the lap)")
-    if r.get("length_marker_m"):
-        lines.append(f"length from the marker {r['length_marker_m']:.2f} m; from steady speed x lap time (simulator motor model, "
-                     f"UNCALIBRATED on real cars) {r['length_model_m']:.2f} m: discrepancy {r['model_discrepancy_pct']:+.0f} %")
-    if r.get("user_length_discrepancy_pct") is not None:
-        lines.append(f"known length given: the markers' length was {r['user_length_discrepancy_pct']:+.1f} % off")
-    lines.append(f"speed {r['speed_mps']:.2f} m/s (gain vs the model: {model.gain_hint:.2f}); lap {r['lap_time_s']:.1f} s")
-    lines.append(f"lane changers at {[round(c, 3) for c in r['changers']]}; blind zones (lap fractions) {[(round(a, 3), round(b, 3)) for a, b in r['blind']]}; "
-                 f"sector anchors {r['anchors']}")
-    for n in r["notes"]:
-        lines.append("note: " + n)
-    if r.get("clock_offset_s") is not None:
-        lines.append(f"CU -> host clock offset {r['clock_offset_s']:.3f} s")
-    return "\n".join(lines)
-
-
-def _prepare(model_path: str, first_frame: Any, register: bool, stored: dict[str, Any] | None = None
-             ) -> tuple[Any, Any, dict[str, Any] | None]:
-    """Load the map; re-register its background to the current view (or reuse the registration stored by
-    a recording: replay then matches the live session exactly); returns (model, background, registration)."""
-    import cv2
-    import numpy as np
-
-    from .geometry import MapModel, RegistrationError, register as do_register
-
-    model = MapModel.load(model_path)
-    if model.background is None:
-        sys.exit("the map has no background image next to it (…bg.png): run `map` again")
-    h, w = first_frame.shape[:2]
-    bg = cv2.resize(model.background, (w, h), interpolation=cv2.INTER_LINEAR)
-    if (w, h) != tuple(model.size):  # a different capture size: scale the map
-        k = np.diag([w / model.size[0], h / model.size[1], 1.0])
-        model = model.warped(k)
-    if not register:
-        return model, bg, None
-    if stored:
-        W, cc = np.array(stored["W"]), stored["cc"]
-    else:
-        try:
-            W, cc = do_register(bg, first_frame)
-        except RegistrationError as e:
-            sys.exit(str(e))
-    shift = float(np.hypot(W[0, 2], W[1, 2]))
-    print(f"map registered to the current view (correlation {cc:.2f}, shift {shift:.1f} px)" + (" [as stored in the recording]" if stored else ""))
-    return (model.warped(W), cv2.warpPerspective(bg, W, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE),
-            {"W": W.tolist(), "cc": float(cc)})
+    return open_source(args, Ctx())
 
 
 def _slots(text: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in text.split(",") if x.strip() != "")
+    return slots_of(text)
 
 
 # ----------------------------------------------------------------------------- commands
@@ -294,145 +217,29 @@ def cmd_marker(args: argparse.Namespace) -> int:
 
 
 def cmd_record(args: argparse.Namespace) -> int:
-    from .live import Live
-    from .recorder import Recorder
-
-    if args.video:
-        sys.exit("`record` records a live camera")
-    out = Path(args.out) if args.out else _data_dir("record")
-    src = _make_source(args)
-    info = src.info()
-    rec = Recorder(out, fps=info["fps"], size=(info["width"], info["height"]), codec=args.codec,
-                   meta={"camera": args.camera, "args": vars(args), "info": info})
-    live = Live(recorder=rec)
-    link = None
-    if args.racelab_url:
-        link = _connect(args)
-        link.raw = rec.log_raw
-        link.start_inputs(live.on_input)
-        print(f"RaceLab connected ({args.racelab_url}): crossings and throttles are recorded")
-    else:
-        print("no --racelab-url: video only")
-    src.start(live.on_frame)
-    live.start()
-    print(f"recording to {out} ({info['width']}x{info['height']} at {info['fps']:.0f} fps, {args.codec}); Ctrl-C to stop")
-    t0 = time.monotonic()
-    try:
-        while args.duration is None or time.monotonic() - t0 < args.duration:
-            time.sleep(2.0)
-            off = rec.clock.offset
-            print(f"  {time.monotonic() - t0:5.0f} s  frames {live.frames}  dropped {live.stream.dropped + rec.dropped}  "
-                  f"crossings {sum(live.crossings.values())}  clock offset {'-' if off is None else format(off, '.3f')}")
-    except KeyboardInterrupt:
-        pass
-    finally:
-        src.stop()
-        live.stop()
-        rec.close()
-        if link:
-            link.close()
-    print(f"saved {out}  ({live.frames} frames, {sum(live.crossings.values())} crossings)")
-    return 0
-
-
-def _build_and_report(args: argparse.Namespace, frames: Any, inputs: Any, empty_range: Any) -> int:
-    from .mapper import MapConfig, MapError, build_map
-
-    cfg = MapConfig(marker_size=args.marker_size, throttle=args.throttle, background=args.background,
-                    empty_frames=args.empty_frames, lane=args.lane, lane_pitch_m=args.lane_pitch_m,
-                    latency_s=args.latency, track_length_m=args.track_length_m, name=args.name, slot=args.slot)
-    try:
-        model = build_map(frames, inputs, cfg, empty_range=empty_range)
-    except MapError as e:
-        print(f"cannot build the map: {e}")
-        return 2
-    model.save(args.out)
-    print(format_report(model))
-    print(f"\nmap saved: {args.out} (+ .bg.png). Next: python -m trackloc run --camera N --map {args.out} --racelab-url ...")
+    do_record(args, Ctx())
     return 0
 
 
 def cmd_map(args: argparse.Namespace) -> int:
-    from .drive import DiscoveryDriver, DriveConfig, MapAborted
-    from .live import Live, MotionMeter
-    from .recorder import Recorder, RecordingReader, load_inputs
+    from .drive import MapAborted
+    from .mapper import MapError
 
-    if args.recording or args.video:  # offline: rebuild from a recording
-        if args.recording:
-            reader = RecordingReader(args.recording)
-            marks = reader.marks("empty_start"), reader.marks("empty_end")
-            erange = (marks[0][0]["t"], marks[1][0]["t"]) if marks[0] and marks[1] else None
-            return _build_and_report(args, reader.frames, reader.inputs(), erange)
-        from .sources import FileSource
-        if not args.inputs:
-            sys.exit("--video needs --inputs FILE.jsonl (the crossings)")
-        return _build_and_report(args, FileSource(args.video).frames, load_inputs(args.inputs), None)
-
-    if not args.racelab_url:
-        sys.exit("`map` drives a car: give --racelab-url (or rebuild offline with --recording DIR)")
-    laps = args.laps or (4 if args.lanes == 2 else 2)
-    out_dir = Path(args.out).with_suffix("")
-    rec_dir = out_dir.parent / (out_dir.name + "_recording")
-    src = _make_source(args)
-    info = src.info()
-    rec = Recorder(rec_dir, fps=info["fps"], size=(info["width"], info["height"]), codec=args.codec,
-                   meta={"command": "map", "args": vars(args), "info": info})
-    live = Live(recorder=rec, meter=MotionMeter())
-    link = _connect(args)
-    link.raw = rec.log_raw
-    link.start_inputs(live.on_input)
-    src.start(live.on_frame)
-    live.start()
-    result: dict[str, Any] = {}
-    interrupted = False
     try:
-        if args.background == "empty":
-            print("\nREMOVE EVERY CAR from the track and keep your hands out of the view.")
-            for k in (3, 2, 1):
-                print(f"  capturing the empty track in {k}...", flush=True)
-                time.sleep(1.0)
-            rec.mark("empty_start")
-            n0 = live.frames
-            while live.frames < n0 + args.empty_frames + 3:
-                time.sleep(0.05)
-            rec.mark("empty_end")
-            print(f"empty track captured ({args.empty_frames} frames).")
-            print(f"NOW PUT ONE CAR (slot {args.slot + 1}) on the track, just behind the finish line.")
-            if args.yes or not sys.stdin.isatty():
-                time.sleep(6.0)
-            else:
-                input("Press Enter when the car is in place... ")
-        drv = DiscoveryDriver(link, args.slot, DriveConfig(throttle=args.throttle, throttle_cap=args.cap, laps=laps,
-                                                           lanes=args.lanes, stall_s=args.stall_s),
-                              progress=live.progress, crossings=lambda: live.crossing_count(args.slot))
-        print(f"driving slot {args.slot + 1} at throttle {args.throttle}/15 for {laps} laps (Ctrl-C hands the car back)...")
-        result = drv.run()
-        print(f"discovery lap done: {result['crossings']} crossings, throttle {result['throttle']}"
-              + (f", {result['bumps']} stall bump(s)" if result["bumps"] else ""))
-        for n in result["notes"]:
-            print("  note:", n)
-    except MapAborted as e:
-        print(f"\nABORTED: {e}")
-        for n in drv.log:
-            print("  ", n)
-        return 3
+        do_map(args, Ctx())
+    except MapAborted:
+        return 3  # said by do_map
+    except MapError:
+        return 2
     except KeyboardInterrupt:
-        interrupted = True
-        print("\ninterrupted: the car was handed back (throttle 0).")
-    finally:
-        src.stop()
-        live.stop()
-        rec.close()
-        link.close()
-    if interrupted:
-        print(f"the recording so far is in {rec_dir}; rebuild with: map --recording {rec_dir} --slot {args.slot}")
         return 130
-    reader = RecordingReader(rec_dir)
-    marks = reader.marks("empty_start"), reader.marks("empty_end")
-    erange = (marks[0][0]["t"], marks[1][0]["t"]) if marks[0] and marks[1] else None
-    code = _build_and_report(args, reader.frames, reader.inputs(), erange)
-    print(f"recording kept in {rec_dir} (rebuild with other parameters: map --recording {rec_dir} --slot {args.slot})")
-    return code
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .serve import run_serve
+
+    return run_serve(args)
 
 
 def cmd_preview(args: argparse.Namespace) -> int:
@@ -486,205 +293,28 @@ def cmd_preview(args: argparse.Namespace) -> int:
     return 0
 
 
-def _wait_frame(feed: Any, seconds: float = 10.0) -> Any:
-    for _ in range(int(seconds / 0.05)):
-        got = feed.latest()
-        if got is not None:
-            return got[1]
-        time.sleep(0.05)
-    sys.exit(f"no frame from the camera in {seconds:g} s")
-
-
-def _roll_setup(args: argparse.Namespace) -> tuple[tuple[int, ...], Any]:
-    """The slots and the settings of the roll call, validated BEFORE anything is opened or connected."""
-    from .identify import RollConfig
-
-    slots = _slots(args.slots)
-    if not slots:
-        sys.exit("the roll call needs --slots: the slots of the cars on the track, e.g. 0,1,2")
-    try:
-        return slots, RollConfig(throttle=args.throttle, cap=args.cap, pulse_s=args.pulse_s)
-    except ValueError as e:
-        sys.exit(str(e))
-
-
-def _roll_call(args: argparse.Namespace, link: Any, pipe: Any, feed: Any) -> list[Any]:
-    """The roll call of `identify` and `run --identify`; raises RollCallAborted (the cars were handed back)."""
-    from .identify import RollCall, format_results
-
-    slots, cfg = _roll_setup(args)
-    print(f"roll call of slots {[s + 1 for s in slots]}: one pulse each at throttle {cfg.throttle}/15 for {cfg.pulse_s:g} s "
-          "(refused while a session runs or E-STOP is on; Ctrl-C hands the car back)...", flush=True)
-    results = RollCall(link, pipe, feed, slots, cfg).run()
-    print(format_results(results))
-    return results
-
-
 def cmd_identify(args: argparse.Namespace) -> int:
-    from .identify import FrameTap, RollCallAborted
-    from .pipeline import Pipeline, PipelineConfig
+    from .identify import RollCallAborted
 
-    if args.video:
-        sys.exit("`identify` moves cars: it needs a live camera")
-    _roll_setup(args)
-    tap = FrameTap()
-    src = _make_source(args)
-    src.start(tap.on_frame)
-    link = None
     try:
-        model, bg, _ = _prepare(args.map, _wait_frame(tap), True)
-        pipe = Pipeline(model, PipelineConfig(), background=bg)
-        link = _connect(args)
-        _roll_call(args, link, pipe, tap)
-    except RollCallAborted as e:
-        print(f"\nABORTED: {e}")
-        return 3
+        do_identify(args, Ctx())
+    except RollCallAborted:
+        return 3  # said by do_identify
     except KeyboardInterrupt:
-        print("\ninterrupted: the car was handed back (throttle 0, unclaimed).")
         return 130
-    finally:
-        src.stop()
-        if link:
-            link.close()
     return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    from .debug import Overlay
-    from .live import Live
-    from .pipeline import Pipeline, PipelineConfig, merge, run_stream
-    from .recorder import JsonlSink, Recorder, load_inputs
-    from .sources import FileSource
+    from .identify import RollCallAborted
 
-    cfg = PipelineConfig(latency_s=args.latency, expected_slots=_slots(args.slots))
-    if args.identify and (args.video or args.inputs or args.sink or not args.racelab_url):
-        sys.exit("--identify moves the cars through RaceLab: it needs the live camera and --racelab-url (not --video, --inputs or --sink)")
-    if args.identify:
-        _roll_setup(args)  # --slots, --throttle, --cap, --pulse-s checked before the camera or RaceLab is touched
-    if args.video or args.inputs:  # offline
-        import cv2
-
-        if not (args.video and args.inputs):
-            sys.exit("offline `run` needs --video FILE and --inputs FILE.jsonl")
-        stamps = Path(args.video).with_name("frames.jsonl")  # a recording's video: use its host-clock times
-        times = [json.loads(line)["t"] for line in stamps.read_text().splitlines() if line.strip()] if stamps.exists() else None
-        if times is None:
-            print("warning: no frames.jsonl next to the video, frames are timed from 0: the inputs' crossings will not "
-                  "line up with them (for a recording, use `replay`)")
-        src = FileSource(args.video, times=times)
-        first = next(iter(src.frames()))[1]
-        model, bg, _ = _prepare(args.map, first, not args.no_register)
-        pipe = Pipeline(model, cfg, background=bg)
-        sink = JsonlSink(args.sink or "positions.jsonl")
-        h, w = first.shape[:2]
-        overlay = Overlay(args.debug, cv2.VideoCapture(args.video).get(cv2.CAP_PROP_FPS) or 30.0, (w, h)) if args.debug else None
-        run_stream(pipe, merge(src.frames(), load_inputs(args.inputs)), sink, args.hz,
-                   after_frame=(lambda img, p: overlay.write(img, p)) if overlay else None)
-        if overlay:
-            overlay.close()
-        sink.close()
-        print(f"{len(pipe.log)} frames processed; positions in {args.sink or 'positions.jsonl'}")
-        return 0
-
-    src = _make_source(args)
-    info = src.info()
-    rec = None
-    if args.record:
-        rec = Recorder(args.record, fps=info["fps"], size=(info["width"], info["height"]), codec=args.codec,
-                       meta={"command": "run", "args": vars(args), "info": info})
-    live = Live(recorder=rec, defer=True)
-    tap = None
-    if args.identify:
-        from .identify import FrameTap
-
-        tap = FrameTap()
-        live.frame_tap = tap.on_frame  # the roll call looks at frames before the session is processed
-    src.start(live.on_frame)
-    live.start()
-    for _ in range(200):  # the first frame registers the map to the current view
-        if live.first_frame is not None:
-            break
-        time.sleep(0.05)
-    else:
-        src.stop()
-        sys.exit("no frame from the camera in 10 s")
-    model, bg, registration = _prepare(args.map, live.first_frame, not args.no_register)
-    if rec is not None:
-        rec.meta["registration"] = registration
-        rec.meta["map"] = args.map
-        rec.meta["latency_s"] = args.latency
-    pipe = Pipeline(model, cfg, background=bg)
-    live.pipeline = pipe
-    if args.debug:
-        live.overlay = Overlay(args.debug, info["fps"], (info["width"], info["height"]))
-    link = None
-    sink: Any
-    if args.sink:
-        sink = JsonlSink(args.sink)
-    else:
-        if not args.racelab_url:
-            src.stop()
-            sys.exit("give --racelab-url to publish to RaceLab (or --sink FILE to write the positions to a file)")
-        link = _connect(args)
-        sink = link
-        if rec:
-            link.raw = rec.log_raw
-    sink.set_track(model.geometry())
-    if link:
-        link.start_inputs(live.on_input)
-
-    def shutdown() -> None:
-        src.stop()
-        live.stop()
-        if rec:
-            rec.close()
-        if link:
-            try:
-                link.clear_track()
-            finally:
-                link.close()
-        elif hasattr(sink, "close"):
-            sink.close()
-
-    if tap is not None:
-        from .identify import RollCallAborted, apply_results
-
-        try:
-            results = _roll_call(args, link, pipe, tap)
-        except RollCallAborted as e:
-            shutdown()
-            print(f"\nABORTED: {e}")
-            return 3
-        except KeyboardInterrupt:
-            shutdown()
-            print("\ninterrupted: the car was handed back (throttle 0, unclaimed).")
-            return 130
-        except BaseException:  # a bug: still close the camera and the link (the car is already released)
-            shutdown()
-            raise
-        live.frame_tap = None
-        with pipe.lock:
-            named = apply_results(pipe.tracker, results)
-        print(f"named by the roll call: slots {[s + 1 for s in named]}; the others wait for a finish-line crossing")
-    live.active = True
-    print(f"track '{model.name}' published ({model.length_c:.2f} m, {len(model.lanes)} lane(s)); cars appear once a "
-          "finish-line crossing names them" + ("" if not cfg.expected_slots else f" (or at once: expected slots {cfg.expected_slots})"))
-    live.start_publisher(sink, args.hz)
     try:
-        while live.error is None:
-            time.sleep(1.0)
-            cars = pipe.positions(time.monotonic())
-            ms = sum(pipe.times_ms[-30:]) / max(1, len(pipe.times_ms[-30:]))
-            print(f"  frames {live.frames} ({ms:.1f} ms/frame)  dropped {live.stream.dropped}  cars " +
-                  " ".join(f"#{c['slot'] + 1}:{c['s']:.3f}{'!' if c['off'] else ''}" for c in cars), flush=True)
+        res = do_run(args, Ctx())
+    except RollCallAborted:
+        return 3
     except KeyboardInterrupt:
-        pass
-    finally:
-        shutdown()
-    if live.error is not None:
-        print(f"stopped: {live.error}")
-        return 1
-    return 0
+        return 130
+    return 1 if res.get("error") else 0
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -695,7 +325,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
     reader = RecordingReader(args.recording)
     first = next(iter(reader.frames()))[1]
-    model, bg, _ = _prepare(args.map, first, not args.no_register, reader.meta.get("registration"))
+    model, bg, _ = prepare(args.map, first, not args.no_register, reader.meta.get("registration"))
     pipe = Pipeline(model, PipelineConfig(latency_s=args.latency, expected_slots=_slots(args.slots)), background=bg)
     h, w = first.shape[:2]
     overlay = Overlay(args.debug, reader.fps, (w, h)) if args.debug else None
@@ -742,9 +372,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(message)s")
     try:
-        return {"probe": cmd_probe, "marker": cmd_marker, "preview": cmd_preview, "record": cmd_record, "map": cmd_map,
+        return {"probe": cmd_probe, "marker": cmd_marker, "preview": cmd_preview, "serve": cmd_serve, "record": cmd_record, "map": cmd_map,
                 "identify": cmd_identify, "run": cmd_run, "replay": cmd_replay, "synth": cmd_synth,
                 "bench": cmd_bench}[args.cmd](args)
+    except TracklocError as e:
+        sys.exit(str(e))
     except OSError as e:
         print(e)
         return 1
