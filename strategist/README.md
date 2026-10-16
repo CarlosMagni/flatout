@@ -56,9 +56,10 @@ Tests: `cd strategist && ../.venv/bin/python -m pytest -q` (the pyproject sets t
 
 ## Status, limits
 
-- **First results: the run5 strategist beats the rule brain on fresh seeds** (position 1.58
-  vs 2.92, 58 % wins) — see [RESULTS.md](RESULTS.md); the ablations show where the next
-  training round should trim (the lane changes are net negative on the one built-in track).
+- **Results**: the run5 strategist beat the rule brain on the default track (1.58 vs 2.92,
+  58 % wins); run7c adds multi-track training — it matches the engineered rules on unseen
+  generated tracks (1.83 vs 1.83, 67 % wins, 2.3 s a race faster, the pit decisions essential,
+  random far behind) — see [RESULTS.md](RESULTS.md).
 - Nothing here has run on real hardware yet (like everything else on this branch).
 - Every episode can drive **its own generated track** (`track_per_seed`, the default in
   train/evaluate; `--single-track` keeps the old behaviour): `racelab.sim` builds one

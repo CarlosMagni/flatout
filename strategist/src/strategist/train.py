@@ -199,11 +199,15 @@ def train(args) -> Path:
         for update in range(1, args.updates + 1):
             t0 = time.time()
             weights = pickle.dumps(params if update == 1 else _export(model))
+            per = args.episodes_per_worker
+            seeds_all = [args.seed * 100000 + update * 1000 + k
+                         for k in range(args.workers * per)]
             tasks = []
-            for w in range(args.workers):
-                seeds = [args.seed * 100000 + update * 1000 + w * 100 + k
-                         for k in range(args.episodes_per_worker)]
-                tasks.append({"weights": weights, "seeds": seeds, "profile": profile,
+            # fine chunks (2 episodes): episodes vary a lot in length (a dry crawl doubles one),
+            # so one big chunk per worker leaves the others idle behind the slowest (~50 % CPU);
+            # many small tasks let the pool steal work and keep every core busy.
+            for i in range(0, len(seeds_all), 2):
+                tasks.append({"weights": weights, "seeds": seeds_all[i:i + 2], "profile": profile,
                               "laps": args.laps, "opponents": args.opponents,
                               "ref_lap_ms": args.ref_lap_ms, "rng_seed": int(rng.integers(2 ** 31)),
                               "track_per_seed": not args.single_track})
