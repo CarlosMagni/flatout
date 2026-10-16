@@ -91,11 +91,13 @@ class RaceEnv:
 
     def __init__(self, profile: dict[str, Any] | None = None, *, seed: int = 0, laps: int = 12,
                  opponents: int = 2, fuel_mode: bool = True, pit_lane: bool = True,
-                 ref_lap_ms: float = REF_LAP_MS, guard_s: float = 120.0, slot: int = 0) -> None:
+                 ref_lap_ms: float = REF_LAP_MS, guard_s: float | None = None, slot: int = 0) -> None:
         self.profile_data = profile or DEFAULT_PROFILE
         self.seed, self.laps_target, self.opponents = seed, int(laps), int(opponents)
         self.fuel_mode, self.pit_lane = fuel_mode, pit_lane
-        self.ref_lap_ms, self.guard_s, self.slot = ref_lap_ms, guard_s, slot
+        self.ref_lap_ms, self.slot = ref_lap_ms, slot
+        # a slow lap with traffic and a pit stop stays well under 9 s: never truncate a real race
+        self.guard_s = guard_s if guard_s is not None else self.laps_target * 9.0 + 30.0
         self._build(seed)
 
     # ------------------------------------------------------------------ build / reset
