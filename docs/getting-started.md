@@ -85,8 +85,11 @@ Camera) or a webcam above the track publishes the track shape and the car positi
 source .venv/bin/activate      # in every new terminal
 python -m trackloc marker      # marker to print at 100 %, then measure the black square
 python -m trackloc probe       # available cameras (allow camera access for the terminal)
-python -m trackloc map --camera 1 --slot 0 --marker-size 0.150   # automatic discovery lap
-python -m trackloc run --camera 1 --map track_map.json --slots 0,1
+python -m trackloc map --camera iphone --slot 0 --marker-size 0.150   # automatic discovery lap
+python -m trackloc run --camera iphone --map track_map.json --slots 0,1
 ```
+
+`--camera` takes an index, a part of the name (`iphone`), a stream URL (`rtsp://…`), or nothing
+(the command lists the cameras and asks which one).
 
 Details (recording, latency, limits) in [`trackloc/README.md`](../trackloc/README.md).

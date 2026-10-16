@@ -86,8 +86,11 @@ position des voitures dans RaceLab.
 source .venv/bin/activate      # dans chaque nouveau terminal
 python -m trackloc marker      # repère à imprimer à 100 %, puis mesurer le carré noir
 python -m trackloc probe       # caméras disponibles (autoriser l'accès caméra au terminal)
-python -m trackloc map --camera 1 --slot 0 --marker-size 0.150   # tour de découverte automatique
-python -m trackloc run --camera 1 --map track_map.json --slots 0,1
+python -m trackloc map --camera iphone --slot 0 --marker-size 0.150   # tour de découverte automatique
+python -m trackloc run --camera iphone --map track_map.json --slots 0,1
 ```
+
+`--camera` accepte un numéro, une partie du nom (`iphone`), une URL de flux (`rtsp://…`), ou rien
+(la commande liste les caméras et demande laquelle).
 
 Le détail (enregistrement, latence, limites) est dans [`trackloc/README.md`](../../trackloc/README.md) (en anglais).

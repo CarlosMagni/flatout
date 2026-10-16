@@ -30,7 +30,13 @@ macOS asks for the camera permission the first time a terminal runs a camera com
    it flat on a board. **Measure the black square with a ruler**. Lay it flat on the table, next to
    the track, in view, and leave it there.
 3. **Check the camera**: `python -m trackloc probe` lists the cameras with their real resolution
-   and frame rate. Note the index of the one you want.
+   and frame rate. `--camera` then takes any of:
+   - an **index**: `--camera 1`;
+   - a **part of the name**: `--camera iphone`, `--camera "desk view"` (case does not matter; it
+     survives a change of numbering when a device comes and goes);
+   - a **stream URL**: `--camera rtsp://192.168.1.20:8554/live` (an IP-camera app on a phone,
+     another computer; `--ffmpeg` also accepts it);
+   - **nothing**: the command lists the cameras and asks which one.
 4. **Record first** (always useful, everything below can be replayed offline):
    ```bash
    python -m trackloc record --camera 1 --duration 120

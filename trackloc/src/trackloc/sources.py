@@ -5,7 +5,9 @@ frame minus half a frame period (`exposure_offset_s`, configurable). The rest of
 latency (a phone through Continuity Camera or a webcam: tens to over 100 ms) is NOT known here:
 it is estimated from the CU crossings (`replay` prints it) and given as `--latency`.
 
-- `CameraSource`: OpenCV `CAP_AVFOUNDATION` by index. A dedicated thread reads continuously (a
+- `resolve_camera()`: `--camera` as an index, a part of the device name (`iphone`), a stream URL
+  (`rtsp://…`, `http://…`), or nothing (asks which one, in a terminal).
+- `CameraSource`: OpenCV `CAP_AVFOUNDATION` by index (or OpenCV's FFmpeg backend for a URL). A dedicated thread reads continuously (a
   late read hands back stale buffered frames with wrong times) and calls `on_frame(t, t_raw, image)`.
 - `FfmpegSource`: the fallback, `ffmpeg -f avfoundation` piped as raw video.
 - `FileSource`: a video file (replay, or the synthetic video written by `synth`).
@@ -61,8 +63,45 @@ def ffmpeg_devices() -> dict[int, str]:
     return names
 
 
+def resolve_camera(spec: str | int | None, ask: Callable[[str], str] | None = None) -> int | str:
+    """`--camera` to what the sources open: an AVFoundation index (int) or a stream URL (str).
+
+    - `None`: in a terminal, list the cameras and ask (`ask` = `input`); otherwise an error;
+    - digits: that index;
+    - `scheme://...`: a network stream (an IP-camera app on a phone, another computer), kept as is;
+    - anything else: a case-insensitive part of the device name, e.g. `iphone`, `desk view`."""
+    if isinstance(spec, int):
+        return spec
+    if spec is not None and spec.strip().isdigit():
+        return int(spec)
+    if spec is not None and "://" in spec:
+        return spec.strip()
+    names = ffmpeg_devices()
+    if spec is None:
+        if ask is None:
+            raise OSError("no camera chosen: give --camera INDEX, --camera NAME (e.g. iphone) or --camera URL "
+                          "(see `python -m trackloc probe`)")
+        if not names:
+            raise OSError("no camera listed (ffmpeg missing?): give --camera INDEX or --camera URL")
+        for i, n in names.items():
+            print(f"  [{i}] {n}")
+        answer = ask("camera (number, part of the name, or a stream URL): ").strip()
+        if not answer:
+            raise OSError("no camera chosen")
+        return resolve_camera(answer)
+    want = spec.casefold().strip()
+    hits = [i for i, n in names.items() if want in n.casefold()]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        listed = "; ".join(f"[{i}] {n}" for i, n in names.items()) or "none listed (is ffmpeg installed?)"
+        raise OSError(f"no camera name contains {spec!r}. Cameras: {listed}")
+    raise OSError(f"{spec!r} matches several cameras: " + "; ".join(f"[{i}] {names[i]}" for i in hits)
+                  + ". Be more precise, or give the index")
+
+
 class CameraSource:
-    def __init__(self, index: int = 0, *, size: tuple[int, int] | None = None, fps: float | None = None,
+    def __init__(self, index: int | str = 0, *, size: tuple[int, int] | None = None, fps: float | None = None,
                  mirror: bool = False, rotate: int = 0, exposure_offset_s: float | None = None) -> None:
         self.index, self.size, self.fps = index, size, fps
         self.mirror, self.rotate = mirror, rotate
@@ -74,9 +113,11 @@ class CameraSource:
         self.gaps = 0  # reads that failed (camera dropped): counted, then the camera is reopened
 
     def open(self) -> CameraSource:
-        cap = cv2.VideoCapture(self.index, cv2.CAP_AVFOUNDATION)
+        url = isinstance(self.index, str)
+        cap = cv2.VideoCapture(self.index, cv2.CAP_FFMPEG if url else cv2.CAP_AVFOUNDATION)
         if not cap.isOpened():
-            raise OSError(f"camera {self.index} did not open. " + PERMISSION_HELP)
+            raise OSError(f"stream {self.index} did not open (check the URL, and that the phone/computer is on the "
+                          "same network)" if url else f"camera {self.index} did not open. " + PERMISSION_HELP)
         if self.size:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.size[0])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.size[1])
@@ -133,9 +174,10 @@ class CameraSource:
 
 
 class FfmpegSource:
-    """Fallback capture: `ffmpeg -f avfoundation` piped as raw BGR frames (the size must be given)."""
+    """Fallback capture: `ffmpeg -f avfoundation` (or a stream URL) piped as raw BGR frames (the size must be
+    given; a stream is scaled to it)."""
 
-    def __init__(self, index: int = 0, *, size: tuple[int, int] = (1280, 720), fps: float = 30.0,
+    def __init__(self, index: int | str = 0, *, size: tuple[int, int] = (1280, 720), fps: float = 30.0,
                  mirror: bool = False, rotate: int = 0, exposure_offset_s: float | None = None) -> None:
         if not shutil.which("ffmpeg"):
             raise OSError("ffmpeg is not installed (brew install ffmpeg)")
@@ -151,8 +193,12 @@ class FfmpegSource:
 
     def start(self, on_frame: Callable[[float, float, np.ndarray], None]) -> None:
         w, h = self.size
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", f"{self.fps:g}",
-               "-video_size", f"{w}x{h}", "-i", f"{self.index}:none", "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
+        if isinstance(self.index, str):  # network stream
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-fflags", "nobuffer", "-i", self.index,
+                   "-vf", f"scale={w}:{h}", "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
+        else:
+            cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", f"{self.fps:g}",
+                   "-video_size", f"{w}x{h}", "-i", f"{self.index}:none", "-pix_fmt", "bgr24", "-f", "rawvideo", "-"]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         n = w * h * 3
 

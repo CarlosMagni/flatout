@@ -32,7 +32,8 @@ def _size(text: str | None) -> tuple[int, int] | None:
 
 
 def _add_camera(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--camera", type=int, default=None, help="camera index (see `probe`)")
+    p.add_argument("--camera", default=None, help="camera: index (see `probe`), part of its name (e.g. iphone), or a "
+                   "stream URL (rtsp://..., http://...); omitted: asks which one")
     p.add_argument("--video", help="a video file instead of a camera (offline)")
     p.add_argument("--size", help="capture size, e.g. 1280x720")
     p.add_argument("--fps", type=float, default=None, help="requested frame rate (30 or 60)")
@@ -134,10 +135,12 @@ def _data_dir(name: str) -> Path:
 
 
 def _make_source(args: argparse.Namespace) -> Any:
-    from .sources import CameraSource, FfmpegSource
+    from .sources import CameraSource, FfmpegSource, resolve_camera
 
-    if args.camera is None:
-        sys.exit("give --camera INDEX (see `python -m trackloc probe`) or --video FILE")
+    try:
+        args.camera = resolve_camera(args.camera, ask=input if sys.stdin.isatty() else None)
+    except OSError as e:
+        sys.exit(f"{e}\n(or --video FILE to work offline)")
     size = _size(args.size)
     if args.ffmpeg:
         return FfmpegSource(args.camera, size=size or (1280, 720), fps=args.fps or 30.0, mirror=args.mirror,
