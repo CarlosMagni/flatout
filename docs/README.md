@@ -16,3 +16,4 @@ Also: [examples for agents](../racelab/examples/README.md) (Python client,
 Gymnasium environment, a track connector) and the
 [tools](../tools/README.md). The project overview is in the
 [main README](../README.md); see [CONTRIBUTING](../CONTRIBUTING.md) to help.
+- [roadmap.md](roadmap.md): status, phases, what is left
