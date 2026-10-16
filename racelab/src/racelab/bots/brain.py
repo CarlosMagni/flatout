@@ -246,6 +246,26 @@ class BrainProfile:
         else:
             raise ValueError("brain request: 'pit' or 'lane'")
 
+    def set_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Live parameters (`bot.params`): applied in place, everything learned is kept.
+
+        Known: `risk` (the MPC pilot's 0..1, the deslot penalty). Unknown keys and invalid values
+        are refused (the caller — the RL strategist — must see a mistake, not a silent no-op)."""
+        if not isinstance(params, dict):
+            raise ValueError("params: object expected")
+        applied: dict[str, Any] = {}
+        for key, value in params.items():
+            if key != "risk":
+                raise ValueError(f"unknown live parameter: {key}")
+            if not hasattr(self._model, "risk"):
+                raise ValueError(f"pilot {self.pilot} has no live risk")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+                raise ValueError("risk: number between 0 and 1 expected")
+            self._model.risk = float(value)
+            self.pilot_params["risk"] = self._model.risk
+            applied[key] = self._model.risk
+        return applied
+
     def output(self, ctx: Context) -> int:
         self._ask = None
         value = self._model.output(ctx)  # a pilot failure goes up to the manager's guard: throttle 0

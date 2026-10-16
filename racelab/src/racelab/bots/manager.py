@@ -131,6 +131,14 @@ class BotManager:
             raise ValueError("this car is not driven by the race brain (Auto with the Race brain profile)")
         s.profile.request(what)
 
+    def set_params(self, slot: int, params: dict[str, Any]) -> dict[str, Any]:
+        """Live profile parameters (`bot.params`): changed in place, everything learned is kept
+        (the MPC pilot's `risk`). Only profiles that implement `set_params` — the race brain."""
+        s = self._slot(slot)
+        if s.driver != "profile" or not hasattr(s.profile, "set_params"):
+            raise ValueError("this car has no profile taking live parameters (the Race brain does)")
+        return s.profile.set_params(params)
+
     def estop(self) -> None:
         """Throttle 0 everywhere. API agents lose their claim: after the E-STOP is
         lifted, an agent must `bot.claim` again (nothing restarts by itself at its old throttle)."""

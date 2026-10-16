@@ -692,6 +692,9 @@ class RaceLabApp:
     def _op_bot_brain(self, args, client):
         self.bots.brain_request(int(args["slot"]), str(args.get("request", "")))
 
+    def _op_bot_params(self, args, client):
+        return self.bots.set_params(int(args["slot"]), args["params"])
+
     def _op_bot_profile(self, args, client):
         result = self.bots.set_profile(int(args["slot"]), args["profile"])
         self.cfg.bots = self.bots.dump_profiles()
@@ -1226,6 +1229,7 @@ class RaceLabApp:
         "bot.lane": _op_bot_lane,
         "bot.profile": _op_bot_profile,
         "bot.brain": _op_bot_brain,
+        "bot.params": _op_bot_params,
         "bot.claim": _op_bot_claim,
         "bot.act": _op_bot_act,
         "bot.unclaim": _op_bot_unclaim,

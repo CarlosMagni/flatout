@@ -546,3 +546,29 @@ def brain_ctx(**kw):
     from racelab.bots.profiles import Context
 
     return Context(**{"now": 1.0, "since_cross_s": None, "laps": 0, **kw})
+
+
+# ------------------------------------------------------------------ live params (bot.params)
+
+def test_live_params_risk_applies_in_place_and_keeps_the_learned_state():
+    """The RL strategist changes the MPC's risk between two laps: no profile rebuild, no loss."""
+    r = Race(brain_profile(pilot="mpc", pilot_params={"risk": 0.5}))
+    r.run(lambda r: r.laps >= 1)
+    prof = r.bots.slots[0].profile
+    grip = dict(prof._model._f)
+    assert r.bots.set_params(0, {"risk": 0.9}) == {"risk": 0.9}
+    assert prof._model.risk == 0.9 and dict(prof._model._f) == grip
+    assert prof.pilot_params["risk"] == 0.9
+    for bad in ({"risk": 2}, {"risk": -1}, {"risk": True}, {"risk": "high"}, {"nope": 1}):
+        with pytest.raises(ValueError):
+            r.bots.set_params(0, bad)
+    assert prof._model.risk == 0.9  # a refused update changes nothing
+
+
+def test_live_params_are_refused_without_a_brain_or_a_risk():
+    with pytest.raises(ValueError):
+        Race(brain_profile()).bots.set_params(0, {"risk": 1.0})   # corners pilot: no live risk
+    c = Race(brain_profile(pilot="mpc"))
+    c.bots.take(0, "manual")
+    with pytest.raises(ValueError):
+        c.bots.set_params(0, {"risk": 1.0})                        # not a profile driver
