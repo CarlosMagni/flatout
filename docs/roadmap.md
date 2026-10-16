@@ -71,9 +71,11 @@ per lap; the manager's safety gates (STOP, dead-man, link, lights) stay in front
   - optional, pace: the mpc's `risk` from 3 levels. Gap: `bot.profile` builds a new profile, which
     drops the learned grip and the estimators; a live change needs a generic RaceLab op that updates
     parameters in place.
-- **Observation**, all already in the brain or the snapshot: laps done and left (or time left), fuel
-  (0-15) and fuel per lap, lane, recent clean lap time per lane, gap and speed to the cars ahead and
-  behind, whether the other lane is free at the next changer, stops made.
+- **Observation**: laps done and left (or time left), fuel (0-15) and fuel per lap, lane, recent
+  clean lap time per lane, gap and speed to the cars ahead and behind, whether the other lane is free
+  at the next changer, stops made. Compute it from the snapshot only (`cars[]` fuel and laps,
+  positions, `brain.fuel_per_lap`), the same code in the training environment and live: a `/ws`
+  client cannot read the brain's internals.
 - **Environment**: headless and faster than real time on `racelab.sim` (virtual CU and physics: fuel
   with `EMPTY_SCALE`, pit lane `PIT_SPEED` / `PIT_STOP_S`, lane changers, simulated humans that pit
   under `PIT_FUEL` and change lane with `LANE_CHANGE_PROB`), driving the real `BrainProfile`. The tick
