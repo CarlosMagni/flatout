@@ -20,7 +20,11 @@ function route() {
   const [name, ...rest] = (location.hash.replace(/^#\/?/, "") || "race").split("/");
   const View = ROUTES[name] || RaceView;
   const key = ROUTES[name] ? name : "race";
-  document.querySelectorAll("#tabs a").forEach((a) => toggle(a, "active", a.dataset.route === key));
+  document.querySelectorAll("#tabs a").forEach((a) => {
+    toggle(a, "active", a.dataset.route === key);
+    if (a.dataset.route === key) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  });
   if (currentName === key && current?.route) {
     current.route(rest);
     return;
@@ -48,6 +52,7 @@ function updateTopbar(state) {
   if (!store.online || !state) {
     pillDot.className = "dot bad";
     setText(pillLabel, t("topbar.server_down"));
+    pill.setAttribute("aria-label", pillLabel.textContent);
     if (!offlineBanner) {
       offlineBanner = h("div.offline", { text: t("topbar.offline_banner") });
       document.body.append(offlineBanner);
@@ -72,6 +77,7 @@ function updateTopbar(state) {
     pillDot.className = `dot ${link.state === "lost" ? "bad" : "warn"}`; // updating / connecting: orange
     setText(pillLabel, { lost: t("topbar.lost"), updating: t("topbar.updating") }[link.state] || t("topbar.searching"));
   }
+  pill.setAttribute("aria-label", pillLabel.textContent); // the label is hidden on narrow screens
   pill.title = link.error ? t("topbar.last_error", { error: link.error }) : t("topbar.link_title");
   pill.href = link.transport === "none" ? "#/race" : "#/system";
 
@@ -80,6 +86,7 @@ function updateTopbar(state) {
   const why = botsUnavailable(state);
   modeSwitch.querySelectorAll("button").forEach((b) => {
     toggle(b, "on", b.dataset.mode === state.mode);
+    b.setAttribute("aria-pressed", b.dataset.mode === state.mode ? "true" : "false");
     const advanced = b.dataset.mode === "advanced";
     b.disabled = busy || (advanced && !!why && state.mode !== "advanced");
     b.title = busy ? t("mode.busy")

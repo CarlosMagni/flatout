@@ -7,7 +7,7 @@ import { request } from "../store.js";
 
 export function toast(text, kind = "info", ms = 3200) {
   const box = document.getElementById("toasts");
-  const el = h(`div.toast.${kind}`, { text });
+  const el = h(`div.toast.${kind}`, { text, role: kind === "error" ? "alert" : null });
   box.append(el);
   setTimeout(() => el.remove(), ms);
 }
@@ -28,7 +28,7 @@ export async function run(op, args = {}, okText) {
 
 export function Lights() {
   const leds = Array.from({ length: 5 }, () => h("i.light"));
-  const el = h("div.lights", { title: t("lights.title") }, leds);
+  const el = h("div.lights", { title: t("lights.title"), role: "img", "aria-label": t("lights.title") }, leds);
   return {
     el,
     update(cu, sessionState) {
@@ -49,7 +49,7 @@ export function FuelGauge() {
   const segs = Array.from({ length: 15 }, () => h("i"));
   const bar = h("div.fuel-bar", {}, segs);
   const pit = h("span.pit-tag");
-  const el = h("div.fuel", {}, pit, bar);
+  const el = h("div.fuel", { role: "img" }, pit, bar);
   return {
     el,
     update(fuel, inPit, low = 3) {
@@ -59,6 +59,7 @@ export function FuelGauge() {
       toggle(bar, "crit", fuel != null && v <= low);
       setText(pit, inPit ? "PIT" : "");
       el.title = fuel == null ? t("fuel.unknown") : t("fuel.level", { v });
+      el.setAttribute("aria-label", el.title);
     },
   };
 }
@@ -72,7 +73,7 @@ export function Fader({ onChange, limit = 12 }) {
   const fill = h("div.fill");
   const knob = h("div.knob");
   const limitEl = h("div.limit");
-  const el = h("div.fader", { tabindex: 0, role: "slider", "aria-valuemin": 0, "aria-valuemax": 15 },
+  const el = h("div.fader", { tabindex: 0, role: "slider", "aria-orientation": "vertical", "aria-valuemin": 0, "aria-valuemax": 15 },
     ticks, limitEl, fill, knob);
   let value = 0;
   let unlocked = false;
@@ -136,6 +137,7 @@ export function Fader({ onChange, limit = 12 }) {
       toggle(el, "readonly", m === "readonly");
       toggle(el, "disabled", m === "disabled");
       el.tabIndex = m === "edit" ? 0 : -1;
+      el.setAttribute("aria-disabled", m === "edit" ? "false" : "true");
       render(value);
     },
     setUnlocked(on) { unlocked = on; render(value); },
@@ -207,7 +209,7 @@ export function openDrawer(title, content, actions = []) {
   const close = () => { backdrop.remove(); drawer.remove(); document.removeEventListener("keydown", onKey, true); };
   const onKey = (ev) => { if (ev.key === "Escape") { ev.stopPropagation(); close(); } };
   const backdrop = h("div.drawer-backdrop", { onclick: close });
-  const drawer = h("aside.drawer", { role: "dialog", "aria-label": title },
+  const drawer = h("aside.drawer", { role: "dialog", "aria-modal": "true", "aria-label": title },
     h("header", {}, h("h3", { text: title }), h("button.btn.ghost.sm", { onclick: close, "aria-label": t("common.close") }, t("common.close"))),
     h("div.content", {}, content),
     actions.length ? h("footer", {}, actions.map((a) => {
@@ -250,7 +252,11 @@ export function Toggle(checked, onChange, label) {
 export function Segmented(options, value, onChange) {
   const buttons = options.map((o) => h("button", { type: "button", text: o.label, title: o.title || "", dataset: { value: o.value } }));
   const el = h("div.seg", { role: "group" }, buttons);
-  const set = (v) => buttons.forEach((b) => toggle(b, "on", b.dataset.value === String(v)));
+  const set = (v) => buttons.forEach((b) => {
+    const on = b.dataset.value === String(v);
+    toggle(b, "on", on);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+  });
   buttons.forEach((b) => b.addEventListener("click", () => onChange?.(b.dataset.value)));
   set(value);
   return { el, set, buttons };

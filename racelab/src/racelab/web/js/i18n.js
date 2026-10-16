@@ -41,6 +41,7 @@ export function setLang(next) {
 
 const en = {
   // ---- top bar and shell
+  "nav.label": "Main navigation",
   "nav.race": "Race",
   "nav.setup": "Session",
   "nav.history": "History",
@@ -249,6 +250,7 @@ const en = {
   "bot.driver.api_title": "An external program drives (for developers)",
   "bot.tag": "Bot",
   "bot.toggle_aria": "Let the computer drive this car",
+  "bot.fader_aria": "Throttle, {name}",
   "bot.toggle_title": "Let the computer drive this car",
   "bot.slot": "Slot {n}",
   "bot.lane": "Lane",
@@ -578,6 +580,7 @@ const en = {
 
 const fr = {
   // ---- top bar and shell
+  "nav.label": "Navigation principale",
   "nav.race": "Course",
   "nav.setup": "Séance",
   "nav.history": "Historique",
@@ -786,6 +789,7 @@ const fr = {
   "bot.driver.api_title": "Un programme externe pilote (pour développeurs)",
   "bot.tag": "Bot",
   "bot.toggle_aria": "Confier cette voiture à l'ordinateur",
+  "bot.fader_aria": "Gaz, {name}",
   "bot.toggle_title": "Confier cette voiture à l'ordinateur",
   "bot.slot": "Slot {n}",
   "bot.lane": "Voie",

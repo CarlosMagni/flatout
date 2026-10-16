@@ -14,11 +14,13 @@
 
   --text: #ecebe6;
   --text-2: #a3a5ab;
-  --text-3: #6d7078;
+  --text-3: #8a8d95;      /* 5.1:1 on the raised panel (was #6d7078, 3.6:1) */
 
   --go: #30d158;
   --caution: #ffb340;
   --stop: #ff453a;
+  --stop-solid: #d70015; /* background under white text: 5.4:1 */
+  --focus: #6aa9ff;
   --pb: #30d158;      /* personal best lap */
   --sb: #bf5af2;      /* session best lap */
   --info: #6aa9ff;
@@ -50,6 +52,14 @@ a { color: inherit; }
 .dim { color: var(--text-2); }
 .faint { color: var(--text-3); }
 .hidden { display: none !important; }
+
+/* keyboard focus: one visible ring everywhere (components may refine it) */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.input:focus-visible, .fader:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.stepper:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 .eyebrow {
   font-size: 11px;
@@ -167,19 +177,21 @@ a { color: inherit; }
 @media (hover: none), (max-width: 560px) { .btn kbd { display: none; } }
 
 .estop {
-  height: 34px;
-  padding: 0 16px;
+  height: 40px;
+  min-width: 76px;
+  padding: 0 20px;
   border-radius: var(--r);
-  border: 1.5px solid var(--stop);
-  background: transparent;
+  border: 2px solid var(--stop);
+  background: rgba(255, 69, 58, .14);
   color: var(--stop);
-  font-weight: 750;
-  letter-spacing: .06em;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: .08em;
   cursor: pointer;
 }
-.estop:hover { background: rgba(255, 69, 58, .12); }
-.estop.live { background: var(--stop); color: #fff; }
-.estop.engaged { background: var(--stop); color: #fff; animation: pulse 1.2s infinite; }
+.estop:hover { background: rgba(255, 69, 58, .26); }
+.estop.live { background: var(--stop-solid); border-color: var(--stop); color: #fff; }
+.estop.engaged { background: var(--stop-solid); border-color: #fff; color: #fff; animation: pulse 1.2s infinite; }
 
 /* segmented control */
 .seg {
@@ -231,7 +243,7 @@ a { color: inherit; }
 
 /* driver badge (controller / bot / AI) */
 .who {
-  font: 600 10px var(--mono);
+  font: 600 11px var(--mono);
   letter-spacing: .06em;
   padding: 2px 5px;
   border-radius: 4px;
@@ -393,7 +405,7 @@ h1.page {
 .fuel-bar i.on { background: var(--text-2); }
 .fuel-bar.low i.on { background: var(--caution); }
 .fuel-bar.crit i.on { background: var(--stop); }
-.pit-tag { font: 700 10px var(--mono); color: var(--caution); letter-spacing: .05em; }
+.pit-tag { font: 700 11px var(--mono); color: var(--caution); letter-spacing: .05em; }
 
 .empty {
   padding: 48px 24px;
@@ -846,4 +858,29 @@ body.bigscreen { background: #000; overflow: hidden; }
 .bs-step.p3 .bs-step-block { height: 16vh; }
 
 .bs-controls { position: fixed; right: 2vw; bottom: 2vh; display: flex; gap: 8px; opacity: 0; transition: opacity .2s; }
-.bs.show-controls .bs-controls { opacity: 1; }
+.bs.show-controls .bs-controls, .bs-controls:focus-within { opacity: 1; }
+
+/* ------------------------------------------------------------ touch screens: 44 px targets */
+
+@media (pointer: coarse) {
+  .btn { height: 44px; }
+  .btn.sm { height: 40px; }
+  .btn.lg { height: 48px; }
+  .seg button { height: 40px; padding: 0 14px; }
+  .tabs a { padding: 11px 12px; }
+  .link-pill { height: 40px; }
+  .sw { width: 30px; height: 30px; }
+  .toggle::before { content: ""; position: absolute; inset: -12px -6px; }
+  .estop { height: 44px; }
+}
+
+/* ------------------------------------------------------------ reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

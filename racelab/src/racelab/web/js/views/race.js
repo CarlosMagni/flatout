@@ -510,6 +510,7 @@ class BotCard {
     this.carno.style.color = inkOn(color);
     setText(this.carno, this.slot + 1);
     setText(this.name, car?.name || t("bot.slot", { n: this.slot + 1 }));
+    this.fader.el.setAttribute("aria-label", t("bot.fader_aria", { name: this.name.textContent }));
     const connected = state.link.state === "connected";
     const driver = bot.driver;
     if (driver) this.choice = driver;
@@ -533,6 +534,7 @@ class BotCard {
     }
     toggle(this.unlock, "hidden", driver !== "manual");
     toggle(this.unlock, "on", this.fader.unlocked);
+    this.unlock.setAttribute("aria-pressed", this.fader.unlocked ? "true" : "false");
     toggle(this.gear, "hidden", driver !== "profile");
     this.lane.disabled = !driver || !connected;
 
