@@ -74,3 +74,18 @@ stock V339 in System → Advanced options (see the
   sessions or settings).
 
 More in the [user guide](user-guide.md).
+
+## Camera localisation (optional)
+
+The [`trackloc/`](../trackloc/README.md) folder is a camera connector: an iPhone (Continuity
+Camera) or a webcam above the track publishes the track shape and the car positions to RaceLab.
+
+```bash
+.venv/bin/pip install -e trackloc
+python -m trackloc marker      # marker to print at 100 %, then measure the black square
+python -m trackloc probe       # available cameras (allow camera access for the terminal)
+python -m trackloc map --camera 1 --slot 0 --marker-size 0.150   # automatic discovery lap
+python -m trackloc run --camera 1 --map track_map.json --slots 0,1
+```
+
+Details (recording, latency, limits) in [`trackloc/README.md`](../trackloc/README.md).

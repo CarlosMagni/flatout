@@ -74,3 +74,19 @@ V338 : mets-la à jour avec la V339 d'origine dans Système → Options avancée
   ni aux réglages).
 
 Plus de détails dans le [guide utilisateur](../user-guide.md) (en anglais).
+
+## Localisation par caméra (optionnel)
+
+Le dossier [`trackloc/`](../../trackloc/README.md) fournit un connecteur caméra : un iPhone
+(Continuity Camera) ou une webcam au-dessus de la piste, qui publie la forme du circuit et la
+position des voitures dans RaceLab.
+
+```bash
+.venv/bin/pip install -e trackloc
+python -m trackloc marker      # repère à imprimer à 100 %, puis mesurer le carré noir
+python -m trackloc probe       # caméras disponibles (autoriser l'accès caméra au terminal)
+python -m trackloc map --camera 1 --slot 0 --marker-size 0.150   # tour de découverte automatique
+python -m trackloc run --camera 1 --map track_map.json --slots 0,1
+```
+
+Le détail (enregistrement, latence, limites) est dans [`trackloc/README.md`](../../trackloc/README.md) (en anglais).

@@ -29,7 +29,8 @@ through an API.
   [Gymnasium](https://gymnasium.farama.org/)-style environment (`racelab.client`).
 - **Track connectors** — any program (e.g. an overhead camera) can publish the
   track shape and car positions; the map and the agents read them in the same
-  format as the simulator.
+  format as the simulator. [`trackloc/`](trackloc/README.md) is one: a camera
+  connector (one phone or webcam, automatic track mapping, car tracking).
 - **Virtual CU** — a simulated track, cars and firmware: try everything, write
   and test agents, without hardware.
 - **CU firmware flashing** (advanced option, not needed for bots) — the images

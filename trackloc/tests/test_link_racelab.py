@@ -66,14 +66,18 @@ def test_crossings_and_throttles_arrive_as_plain_input_dicts(racelab_factory):
     try:
         assert link.ensure_session() is True  # crossings only count in a running session: practice has no lights
         link.claim(0)
-        link.act(0, throttle=9)
-        assert wait_for(lambda: sum(1 for m in got if m["type"] == "crossing") >= 2, 20)
+
+        def driving():  # an agent must keep acting: one lone `act` is cut by the dead-man switch after ~1 s
+            link.act(0, throttle=9)
+            return sum(1 for m in got if m["type"] == "crossing") >= 2
+
+        assert wait_for(driving, 30)
         cross = [m for m in got if m["type"] == "crossing"]
         assert all(set(m) == {"type", "t", "slot", "sector", "cu_ts"} and m["slot"] == 0 and m["sector"] == 1
                    and isinstance(m["cu_ts"], int) and 0 <= m["cu_ts"] < 2 ** 32 for m in cross)
         assert abs(cross[0]["t"] - time.monotonic()) < 30  # the server's time.monotonic(): the same host clock
         thr = [m for m in got if m["type"] == "throttle" and m["slot"] == 0]
-        assert thr and thr[0]["applied"] == 9
+        assert any(m["applied"] == 9 for m in thr)  # the claim itself may first report 0
         link.act(0, throttle=0)
         link.unclaim(0)
         assert wait_for(lambda: [m for m in got if m["type"] == "throttle"][-1]["applied"] in (0, None))
@@ -177,7 +181,9 @@ def test_estop_mid_lap_aborts_and_the_car_stays_stopped(racelab_factory):
         th.join(15)
         assert not th.is_alive() and "taken from us" in result["abort"]
         driver, value, session, estop = slot_state(server)
-        assert driver is None and value == 0 and estop  # E-STOP stays on: clearing it is a human decision
+        # E-STOP keeps the slot a bot at throttle 0 (bot-protocol.md, safety rule 3: handing back would give the car
+        # to whoever holds a controller); it stays on: clearing it is a human decision
+        assert driver is not None and value == 0 and estop
         assert ctl.claims == 1  # and we never claimed the car again
     finally:
         link.close()

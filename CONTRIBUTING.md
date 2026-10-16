@@ -14,9 +14,10 @@ CI) refuses any `.hmf`/`.bin`/`.hex` file and disassembly listings.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e carreralib/ -e "racelab[dev]"
+.venv/bin/pip install -e carreralib/ -e "racelab[dev]" -e "trackloc[dev]"
 cd racelab && ../.venv/bin/python -m pytest -q             # app
 cd carreralib && ../.venv/bin/python -m pytest tests -q    # carreralib with our additions
+cd trackloc && ../.venv/bin/python -m pytest -q           # camera localisation (imports racelab, never the reverse)
 .venv/bin/racelab --sim                                    # try the UI on the virtual CU
 ```
 
