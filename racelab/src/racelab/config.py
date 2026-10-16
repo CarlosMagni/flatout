@@ -89,6 +89,10 @@ class ApiConfig:
     enabled: bool = True
     token: str = ""  # if not empty: required (Authorization: Bearer header / ?token=)
     state_hz: float = 10.0  # broadcast rate of the full state
+    # Host header names accepted besides IP literals and "localhost" (DNS-rebinding guard)
+    allowed_hosts: list[str] = field(default_factory=list)
+    # cross-origin pages allowed to use the API/WebSocket, e.g. "http://dash.example:3000"
+    allowed_origins: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -206,6 +210,10 @@ def validate(cfg: Config) -> None:
         raise ConfigError("[safety] heartbeat_ms too low (min 100)")
     if cfg.safety.min_bot_interval_ms < 20:
         raise ConfigError("[safety] min_bot_interval_ms too low (min 20)")
+    for key in ("allowed_hosts", "allowed_origins"):
+        value = getattr(cfg.api, key)
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ConfigError(f"[api] {key} must be a list of strings")
     for slot in cfg.sim.humans:
         if slot not in range(6):
             raise ConfigError("[sim] humans: slots 0..5")

@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import itertools
 import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from aiohttp import WSMsgType, web
 
@@ -30,6 +32,62 @@ _ids = itertools.count(1)
 
 def _json(data: Any, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, ensure_ascii=False))
+
+
+def _split_host(value: str) -> tuple[str, int | None] | None:
+    """`host[:port]` (also `[v6]:port`) -> (lowercase host, port), None if malformed."""
+    try:
+        parts = urlsplit("//" + value)
+        host = parts.hostname
+        return (host, parts.port) if host and not parts.path else None
+    except ValueError:
+        return None
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _origin_ok(origin: str, host_header: str, scheme: str, allowed: set[str]) -> bool:
+    """Same-origin check: the Origin's scheme, host and port are the request's own."""
+    if origin.rstrip("/").lower() in allowed:
+        return True
+    try:
+        parts = urlsplit(origin)
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme != scheme or not parts.hostname or parts.path not in ("", "/"):
+        return False  # includes the opaque origin "null"
+    want = _split_host(host_header)
+    if want is None:
+        return False
+    default = 443 if scheme == "https" else 80
+    return (parts.hostname, port or default) == (want[0], want[1] or default)
+
+
+def check_request(request: web.Request, cfg_api, bind_host: str = "") -> str | None:
+    """Reject DNS rebinding (bad Host) and cross-site requests (foreign Origin).
+
+    Returns an error message, or None if the request may go on. A request
+    without Origin is not from a browser page (client, curl): it stays allowed.
+    """
+    host = _split_host(request.headers.get("Host", ""))
+    allowed_hosts = {h.lower() for h in cfg_api.allowed_hosts}
+    if bind_host:
+        allowed_hosts.add(bind_host.lower())
+    if host is None or not (host[0] == "localhost" or _is_ip(host[0]) or host[0] in allowed_hosts):
+        return "host not allowed (see [api] allowed_hosts)"
+    origin = request.headers.get("Origin")
+    if origin is not None and (request.path.startswith("/api") or request.path == "/ws"):
+        allowed = {o.rstrip("/").lower() for o in cfg_api.allowed_origins}
+        if not _origin_ok(origin, request.headers["Host"], request.scheme, allowed):
+            return "cross-origin request refused (see [api] allowed_origins)"
+    return None
 
 
 class WSClient:
@@ -61,6 +119,15 @@ class WSClient:
 def create_web_app(app: RaceLabApp) -> web.Application:
     token = app.cfg.api.token
     names: set[str] = set()
+
+    @web.middleware
+    async def origin_guard(request: web.Request, handler):
+        error = check_request(request, app.cfg.api, app.cfg.app.host)
+        if error:
+            logger.warning("%s %s refused: %s (Host=%r Origin=%r)", request.method, request.path,
+                           error, request.headers.get("Host"), request.headers.get("Origin"))
+            return _json({"ok": False, "error": error}, 403)
+        return await handler(request)
 
     @web.middleware
     async def auth(request: web.Request, handler):
@@ -191,7 +258,7 @@ def create_web_app(app: RaceLabApp) -> web.Application:
             app.client_gone(name)
         return ws
 
-    web_app = web.Application(middlewares=[auth, revalidate])
+    web_app = web.Application(middlewares=[origin_guard, auth, revalidate])
     web_app.add_routes([
         web.get("/", index),
         web.get("/ws", websocket),

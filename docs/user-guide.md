@@ -73,7 +73,10 @@ process ([`racelab/src/racelab/cu/blescan.py`](../racelab/src/racelab/cu/blescan
 and shows what to do instead of stopping.
 
 The UI is served on <http://localhost:8130>. To use it from a tablet, set
-`[app] host = "0.0.0.0"` in `racelab.toml` (and ideally an `[api] token`).
+`[app] host = "0.0.0.0"` in `racelab.toml` (and ideally an `[api] token`), and open
+it by the computer's IP address (`http://192.168.1.20:8130`). A name such as
+`http://pit-pc.local:8130` is refused (403, protection against DNS rebinding) until it
+is listed in `[api] allowed_hosts`.
 All the configuration is documented in
 [`racelab/racelab.example.toml`](../racelab/racelab.example.toml).
 

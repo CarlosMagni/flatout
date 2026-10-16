@@ -197,6 +197,29 @@ Reply: `{"ok": true, "result": …}` or `{"ok": false, "error": "…"}` (HTTP 40
 With REST the agent's identity is the `X-Agent` header; the dead-man switch
 applies in the same way (send `bot.act` again at least every 600 ms).
 
+## Security
+
+The server drives real cars, so any web page open in your browser must not be able to
+reach it. Two checks run on every request, before the token:
+
+- **Host** (DNS rebinding): the `Host` header must be an IP address, `localhost`, the
+  `[app] host` the server is bound to, or a name in `[api] allowed_hosts`
+  (e.g. `["pit-pc.local"]` to reach a LAN machine by name). Otherwise `403`.
+- **Origin** (cross-site requests, `/ws` and `/api/*`, GET included): a request that
+  carries an `Origin` header (every browser page does) must be same-origin: same
+  scheme, host and port as the request's own `Host`. Otherwise `403`. The UI is served
+  by the server itself, so it always passes, including as a `RaceLab.app` window and
+  from a tablet on the LAN (`[app] host = "0.0.0.0"`, open `http://<LAN IP>:8130`).
+  Use the same name in the address bar as in `allowed_hosts`.
+- A request **without** `Origin` (the Python client, curl, scripts) is not a browser
+  page and is allowed.
+- `[api] allowed_origins = ["http://dash.example:3000"]` lists foreign pages that may
+  connect anyway (default: none). It is meant for WebSocket clients; no CORS headers are
+  sent, so a foreign page cannot read REST replies. Behind a TLS proxy, list the
+  `https://` origin here too.
+
+`[api] token` is separate and still applies on top of these checks.
+
 ## Python client
 
 See [`racelab/src/racelab/client/`](../racelab/src/racelab/client) and

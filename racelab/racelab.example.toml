@@ -43,6 +43,8 @@ min_interval_ms = 150
 [api]
 enabled = true
 token = ""               # if set: required by the UI and the API (?token=… / Authorization: Bearer …)
+allowed_hosts = []       # Host names accepted besides IPs and localhost (e.g. ["pit-pc.local"]); DNS-rebinding guard
+allowed_origins = []     # pages served elsewhere allowed to use the API (e.g. ["http://dash.example:3000"]); rarely needed
 state_hz = 10            # default rate of the broadcast state (an agent can ask for up to 20)
 
 [sim]                    # virtual CU (racelab --sim)
