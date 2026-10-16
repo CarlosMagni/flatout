@@ -51,3 +51,15 @@ def test_the_live_risk_is_applied_in_place():
     env.step(2)  # risk level 1.0
     assert env.supports_risk and env.profile._model.risk == 1.0
     assert env.profile.pilot_params["risk"] == 1.0
+
+
+def test_a_generated_track_per_seed():
+    from racelab.sim.track import track_for
+    a = RaceEnv(CORNERS, seed=5, laps=1, opponents=1, track_per_seed=True)
+    assert a.sim.track is track_for(5)            # the episode seed picks the track (cached)
+    b = RaceEnv(CORNERS, seed=6, laps=1, opponents=1, track_per_seed=True)
+    assert b.sim.track is not a.sim.track         # another seed, another layout
+    c = RaceEnv(CORNERS, seed=5, laps=1, opponents=1, track_per_seed=True)
+    assert c.sim.track is a.sim.track             # deterministic
+    d = RaceEnv(CORNERS, seed=5, laps=1, opponents=1)
+    assert d.sim.track.geometry()["length_m"][0] == 18.0   # the default track untouched

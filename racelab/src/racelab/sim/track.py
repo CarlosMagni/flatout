@@ -5,11 +5,21 @@ offset to the left of the centerline (inner side: shorter, but tighter in
 left-hand corners), lane 1 to the right. Sample 0 is the finish line; a car's
 "physical" position is the lap fraction along the centerline (independent of
 the lane).
+
+Two kinds of track:
+
+- the **default** layout (`default_track()`, cached): the hand-drawn one;
+- **generated** layouts (`Track(shape_seed=...)` / `track_for(seed)`, cached):
+  a perturbed circle — closed and star-shaped by construction, hence smooth and
+  never self-intersecting — with its lane changers placed on the two
+  straightest stretches (never in the pit zone). Same scaling as the default:
+  lane 0 measures `LAP_LENGTH`, the variety is in the corner shapes and sizes.
 """
 
 from __future__ import annotations
 
 import math
+import random
 from bisect import bisect_right
 from dataclasses import dataclass
 from functools import lru_cache
@@ -22,7 +32,7 @@ GEOMETRY_POINTS = 200  # points returned to the UI
 SMOOTH_M = 0.10  # half-window for curvature smoothing (m)
 V_C_MAX = 99.0  # critical speed of a straight
 
-# Lap fractions (centerline), all on straights.
+# Lap fractions (centerline), all on straights: the default layout's changers and pit zone.
 CHANGERS = (0.385, 0.60)
 PIT = (0.87, 0.97)
 
@@ -52,6 +62,48 @@ def _control_points() -> list[tuple[float, float]]:
     pts += _arc(0.7, 0.66, 0.66, 180, 270, 3)
     pts += [(1.6, 0.0)]
     return pts
+
+
+def _generated_control_points(seed: int, n_points: int = 26) -> list[tuple[float, float]]:
+    """A random closed layout: a circle perturbed by low harmonics.
+
+    `r(θ) = 1 + Σ a_k cos(kθ + φ_k)`, k = 2..5, `a_k` up to 0.11: the curve stays
+    star-shaped (r > 0), so the closed Catmull-Rom is smooth and never crosses itself.
+    The seed fixes everything; different seeds give genuinely different corner sizes,
+    counts and directions. The first point (θ = 0) is the finish line.
+    """
+    rng = random.Random(seed * 1000003 + 17)
+    harmonics = [(k, rng.uniform(0.03, 0.11), rng.uniform(0.0, 2 * math.pi)) for k in (2, 3, 4, 5)]
+    sx, sy = rng.uniform(0.85, 1.20), rng.uniform(0.85, 1.20)  # elongation of the loop
+    pts = []
+    for i in range(n_points):
+        th = 2 * math.pi * i / n_points
+        r = 1.0 + sum(a * math.cos(k * th + ph) for k, a, ph in harmonics)
+        pts.append((sx * r * math.cos(th), sy * r * math.sin(th)))
+    return pts
+
+
+def _straightest_fractions(kappa: list[float], n: int) -> tuple[float, float]:
+    """Two lap fractions, on the two straightest stretches: where the lane changers go.
+
+    The window is ±2 % of the lap; candidates within 3 % of the finish line or inside
+    the pit zone are skipped. The two picks are at least 25 % of a lap apart."""
+    w = round(0.02 * n)
+    zone = (PIT[0] - 0.02, PIT[1] + 0.02)
+    scored = []
+    for i in range(0, n, n // 100):
+        u = i / n
+        if u < 0.03 or u > 0.97 or zone[0] <= u <= zone[1]:
+            continue
+        score = max(abs(kappa[(i + d) % n]) for d in range(-w, w + 1))
+        scored.append((score, i))
+    scored.sort()
+    first = scored[0][1]
+    for _score, i in scored[1:]:
+        d = abs(i - first) / n
+        if min(d, 1.0 - d) >= 0.25:
+            return tuple(sorted((first / n, i / n)))
+    return CHANGERS  # unreachable with the current layout space; a safe fallback
 
 
 def _catmull_rom(points: list[tuple[float, float]], per_segment: int = 400) -> list[tuple[float, float]]:
@@ -127,11 +179,14 @@ class Lane:
 
 
 class Track:
-    """Precomputed geometry: two lanes, lane changers, pit lane zone."""
+    """Precomputed geometry: two lanes, lane changers, pit lane zone.
 
-    def __init__(self) -> None:
+    `shape_seed=None` builds the default layout; an int builds the generated
+    layout of that seed (see the module docstring)."""
+
+    def __init__(self, shape_seed: int | None = None) -> None:
         n = N_SAMPLES
-        raw = _control_points()
+        raw = _control_points() if shape_seed is None else _generated_control_points(shape_seed)
         xs, ys, length = _resample(_catmull_rom(raw), n)
         # scaling: lane 0 (inner, total turning of 2π) measures LAP_LENGTH
         k = (LAP_LENGTH + 2 * math.pi * LANE_OFFSET) / length
@@ -151,7 +206,8 @@ class Track:
         kappa = _smooth(kappa, round(SMOOTH_M / h))
 
         self.n = n
-        self.changers = CHANGERS
+        self.shape_seed = shape_seed
+        self.changers = CHANGERS if shape_seed is None else _straightest_fractions(kappa, n)
         self.pit = PIT
         self.lanes = tuple(
             self._lane(xs, ys, tx, ty, kappa, offset) for offset in (LANE_OFFSET, -LANE_OFFSET)
@@ -176,7 +232,7 @@ class Track:
             i = int(u * n)
             return s[i] + (u * n - i) * (s[i + 1] - s[i])
 
-        lane.changer_s = [at(u) for u in CHANGERS]
+        lane.changer_s = [at(u) for u in self.changers]
         lane.pit_in, lane.pit_out = at(PIT[0]), at(PIT[1])
         lane.pit_stop = at((PIT[0] + PIT[1]) / 2)
         return lane
@@ -223,3 +279,9 @@ class Track:
 def default_track() -> Track:
     """The track (immutable, built once)."""
     return Track()
+
+
+@lru_cache(maxsize=64)
+def track_for(seed: int) -> Track:
+    """The generated track of `seed` (built once, cached): see Track(shape_seed)."""
+    return Track(shape_seed=int(seed))

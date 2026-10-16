@@ -46,7 +46,8 @@ def _worker(task: dict) -> tuple[list[list[tuple]], list[dict]]:
     Returns (episodes, final info of each)."""
     policy = NumpyPolicy(pickle.loads(task["weights"]))
     env = RaceEnv(task["profile"], seed=task["seeds"][0], laps=task["laps"],
-                  opponents=task["opponents"], ref_lap_ms=task["ref_lap_ms"])
+                  opponents=task["opponents"], ref_lap_ms=task["ref_lap_ms"],
+                  track_per_seed=task["track_per_seed"])
     rng = np.random.default_rng(task["rng_seed"])
     episodes: list[list[tuple]] = []
     infos: list[dict] = []
@@ -204,7 +205,8 @@ def train(args) -> Path:
                          for k in range(args.episodes_per_worker)]
                 tasks.append({"weights": weights, "seeds": seeds, "profile": profile,
                               "laps": args.laps, "opponents": args.opponents,
-                              "ref_lap_ms": args.ref_lap_ms, "rng_seed": int(rng.integers(2 ** 31))})
+                              "ref_lap_ms": args.ref_lap_ms, "rng_seed": int(rng.integers(2 ** 31)),
+                              "track_per_seed": not args.single_track})
             if pool is None:
                 results = [_worker(task) for task in tasks]
             else:
@@ -242,6 +244,8 @@ def main() -> int:
                     help="pilot JSON, e.g. '{\"a_lat\": 18.0}' (calibrate for the track!)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--init", default=None, help="warm-start checkpoint (.npz)")
+    ap.add_argument("--single-track", action="store_true",
+                    help="the one built-in track (default: one generated track per episode seed)")
     ap.add_argument("--ref-lap-ms", type=float, default=6000.0)
     ap.add_argument("--out", default="out/train")
     ap.add_argument("--quick", action="store_true", help="2 updates, 2 workers: a smoke run")

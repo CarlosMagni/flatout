@@ -91,11 +91,13 @@ class RaceEnv:
 
     def __init__(self, profile: dict[str, Any] | None = None, *, seed: int = 0, laps: int = 12,
                  opponents: int = 2, fuel_mode: bool = True, pit_lane: bool = True,
-                 ref_lap_ms: float = REF_LAP_MS, guard_s: float | None = None, slot: int = 0) -> None:
+                 ref_lap_ms: float = REF_LAP_MS, guard_s: float | None = None, slot: int = 0,
+                 track_seed: int | None = None, track_per_seed: bool = False) -> None:
         self.profile_data = profile or DEFAULT_PROFILE
         self.seed, self.laps_target, self.opponents = seed, int(laps), int(opponents)
         self.fuel_mode, self.pit_lane = fuel_mode, pit_lane
         self.ref_lap_ms, self.slot = ref_lap_ms, slot
+        self.track_seed, self.track_per_seed = track_seed, track_per_seed
         # a slow lap with traffic and a pit stop stays well under 9 s: never truncate a real race
         self.guard_s = guard_s if guard_s is not None else self.laps_target * 9.0 + 30.0
         self._build(seed)
@@ -105,7 +107,8 @@ class RaceEnv:
     def _build(self, seed: int) -> None:
         self.sim = Simulator(SimConfig(seed=seed, humans=list(range(1, 1 + self.opponents)),
                                        latency_ms=0.0, jitter_ms=0.0, duplicate_rate=0.0,
-                                       fuel_mode=self.fuel_mode, pit_lane=self.pit_lane),
+                                       fuel_mode=self.fuel_mode, pit_lane=self.pit_lane,
+                                       track_seed=seed if self.track_per_seed else self.track_seed),
                              realtime=False)
         self.sim.bot_watchdog_s = None  # the manager feeds every tick; no firmware watchdog here
         self.cu = ControlUnit(self.sim.connect(0.01))

@@ -60,10 +60,12 @@ Tests: `cd strategist && ../.venv/bin/python -m pytest -q` (the pyproject sets t
   vs 2.92, 58 % wins) — see [RESULTS.md](RESULTS.md); the ablations show where the next
   training round should trim (the lane changes are net negative on the one built-in track).
 - Nothing here has run on real hardware yet (like everything else on this branch).
-- The environment uses RaceLab's single built-in track: **track randomisation** waits for a
-  parameterisable `racelab.sim` track; opponents are the sim's simulated humans (skill,
-  mistakes, pit under `PIT_FUEL`, lane changes under `LANE_CHANGE_PROB`); **human replay
-  ghosts** from field recordings are a natural next opponent.
+- Every episode can drive **its own generated track** (`track_per_seed`, the default in
+  train/evaluate; `--single-track` keeps the old behaviour): `racelab.sim` builds one
+  layout per seed, changers on the straightest stretches. Opponents are the sim's
+  simulated humans (skill, mistakes, pit under `PIT_FUEL`, lane changes under
+  `LANE_CHANGE_PROB`); **human replay ghosts** from field recordings are a natural next
+  opponent.
 - One decision per lap in this first version (short episodes, cheap PPO); mid-lap decisions
   before each changer/pit entry are a possible refinement.
 - `live.py` is a skeleton: it assumes the car is already configured as the race brain and

@@ -14,7 +14,7 @@ from carreralib import connection as cn
 from racelab.config import SimConfig
 
 from .physics import Car, Human
-from .track import default_track
+from .track import default_track, track_for
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class Simulator:
 
     def __init__(self, cfg: SimConfig, *, realtime: bool = True) -> None:
         self.cfg = cfg
-        self.track = default_track()
+        self.track = default_track() if cfg.track_seed is None else track_for(cfg.track_seed)
         self._lock = threading.RLock()
         rng = random.Random(cfg.seed)
         self._rng = rng

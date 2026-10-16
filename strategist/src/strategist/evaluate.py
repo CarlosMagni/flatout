@@ -47,16 +47,18 @@ def _ablated(action: int, ablate: str | None) -> int:
 
 def run_arm(arm: str, *, pilot: str, seeds: list[int], laps: int, opponents: int,
             policy: NumpyPolicy | None = None, ablate: str | None = None,
-            pilot_params: dict | None = None) -> list[dict]:
+            pilot_params: dict | None = None, track_per_seed: bool = True) -> list[dict]:
     strategist_p, rule_p = _profiles(pilot, pilot_params)
     rows: list[dict] = []
     rng = np.random.default_rng(1234)
     for seed in seeds:
         if arm == "rule":
-            env = RaceEnv(rule_p, seed=seed, laps=laps, opponents=opponents)
+            env = RaceEnv(rule_p, seed=seed, laps=laps, opponents=opponents,
+                          track_per_seed=track_per_seed)
             info = env.run_episode(None)
         else:
-            env = RaceEnv(strategist_p, seed=seed, laps=laps, opponents=opponents)
+            env = RaceEnv(strategist_p, seed=seed, laps=laps, opponents=opponents,
+                          track_per_seed=track_per_seed)
             env.reset(seed)
 
             def choose(obs, _env, arm=arm):
@@ -90,6 +92,8 @@ def main() -> int:
     ap.add_argument("--pilot-params", default="{}",
                     help="keep the pilot calibrated like training, e.g. '{\"a_lat\": 18.0}'")
     ap.add_argument("--ablate", default=None, choices=("lane", "pit", "risk"))
+    ap.add_argument("--single-track", action="store_true",
+                    help="the one built-in track (default: one generated track per seed)")
     args = ap.parse_args()
 
     params = json.loads(args.pilot_params or "{}")
@@ -99,16 +103,16 @@ def main() -> int:
         policy = NumpyPolicy.load(args.policy)
         name = f"strategist{('-' + args.ablate) if args.ablate else ''}"
         arms.append((name, lambda: run_arm("strategist", pilot=args.pilot, seeds=seeds,
-                                           laps=args.laps, opponents=args.opponents,
+                                           laps=args.laps, opponents=args.opponents, track_per_seed=not args.single_track,
                                            policy=policy, ablate=args.ablate,
                                            pilot_params=params)))
     if args.baseline in ("rule", "both"):
         arms.append(("rule brain", lambda: run_arm("rule", pilot=args.pilot, seeds=seeds,
-                                                   laps=args.laps, opponents=args.opponents,
+                                                   laps=args.laps, opponents=args.opponents, track_per_seed=not args.single_track,
                                                    pilot_params=params)))
     if args.baseline in ("random", "both"):
         arms.append(("random", lambda: run_arm("random", pilot=args.pilot, seeds=seeds,
-                                               laps=args.laps, opponents=args.opponents,
+                                               laps=args.laps, opponents=args.opponents, track_per_seed=not args.single_track,
                                                pilot_params=params)))
 
     print(f"{args.races} courses, {args.laps} tours, {1 + args.opponents} voitures, "

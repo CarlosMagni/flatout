@@ -107,6 +107,7 @@ class SimConfig:
     fuel_mode: bool = True
     pit_lane: bool = True
     duplicate_rate: float = 0.02  # the real CU sometimes repeats a timing event
+    track_seed: int | None = None  # generated track (sim/track.track_for); None = the default track
 
 
 @dataclass
