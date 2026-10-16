@@ -56,6 +56,9 @@ Tests: `cd strategist && ../.venv/bin/python -m pytest -q` (the pyproject sets t
 
 ## Status, limits
 
+- **First results: the run5 strategist beats the rule brain on fresh seeds** (position 1.58
+  vs 2.92, 58 % wins) — see [RESULTS.md](RESULTS.md); the ablations show where the next
+  training round should trim (the lane changes are net negative on the one built-in track).
 - Nothing here has run on real hardware yet (like everything else on this branch).
 - The environment uses RaceLab's single built-in track: **track randomisation** waits for a
   parameterisable `racelab.sim` track; opponents are the sim's simulated humans (skill,
