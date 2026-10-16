@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strategist"
+version = "0.1.0"
+description = "RL strategist for RaceLab's race brain (Strategy v2): lane, pit and risk decisions on top of the pilot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+train = ["torch>=2.2"]   # train.py only; evaluate/live run a policy checkpoint with numpy
+dev = ["pytest>=8", "torch>=2.2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../racelab/src", "../carreralib/src"]
+testpaths = ["tests"]
