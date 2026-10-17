@@ -15,10 +15,11 @@ jobs:
           python-version: "3.11"
       - name: Install
         run: python -m pip install -e carreralib -e "racelab[dev]" -e "trackloc[dev]"
-      - name: Tests (carreralib + racelab)
+      - name: Tests (carreralib + racelab + strategist + trackloc)
         run: |
           (cd carreralib && python -m pytest tests -q)
           (cd racelab && python -m pytest -q)
+          (cd strategist && python -m pytest -q)
           (cd trackloc && python -m pytest -q)
       - name: Publication guard
         run: python tools/check_public.py
