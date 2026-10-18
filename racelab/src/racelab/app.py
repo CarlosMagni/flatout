@@ -56,6 +56,19 @@ BUTTONS = {
 IDLE_STATES = ("idle", "grid", "finished")
 # car programming (J word, command = word number): docs/protocol.md §3
 CAR_WORDS = {"speed": 0, "brake": 1, "fuel": 2}
+# the car live on the track: set a level with the CU keys (hardware 8 ignores the J word).
+# The manual: one press opens the display (shows the level), each further press steps it
+# (levels 1..10, upward, 10 wraps to 1), START validates and writes the car.
+LIVE_LEVELS = 10
+LIVE_PRESS_GAP_S = 0.25
+LIVE_FIELDS = ("speed", "brake", "fuel")
+
+
+def live_walk_steps(level: int, current: int) -> int:
+    """Key presses to walk the level ring (1..10) from `current` up to `level`."""
+    if not 1 <= level <= LIVE_LEVELS or not 1 <= current <= LIVE_LEVELS:
+        raise ValueError("level and current: 1..10")
+    return (level - current) % LIVE_LEVELS
 # during a flash, only these commands go through (reads + flash control)
 FIRMWARE_SAFE_OPS = frozenset({
     "state", "meta", "log", "laps", "results", "sessions.list", "sessions.get",
@@ -792,6 +805,32 @@ class RaceLabApp:
             raise OpError("nothing to program (speed, brake, fuel)")
         self._log("info", f"Car {slot + 1} programmed: {', '.join(f'{k}={args[k]}' for k in done)}")
 
+    async def _op_car_program_live(self, args, client):
+        """Set the level of the car ON the track by simulating the CU keys (works on
+        hardware 8, where the J word is ignored): one press opens the level display, one
+        press per step, START validates and writes the car."""
+        if self.engine.state not in IDLE_STATES:
+            raise OpError("car setup is not possible during a session")
+        field = str(args.get("field", "speed"))
+        if field not in LIVE_FIELDS:
+            raise OpError("field: speed, brake or fuel")
+        try:
+            level = int(args["level"])
+            current = int(args.get("current", level))
+            steps = live_walk_steps(level, current)
+        except KeyError:
+            raise OpError("level is required (1..10)") from None
+        except (TypeError, ValueError):
+            raise OpError("level and current: 1..10") from None
+        button = BUTTONS[field]
+        self.link.press(button)  # open the level display (no step)
+        await asyncio.sleep(LIVE_PRESS_GAP_S)
+        for _ in range(steps):
+            self.link.press(button)
+            await asyncio.sleep(LIVE_PRESS_GAP_S)
+        self.link.press(BUTTONS["start"])  # validate + transmit to the car on the track
+        self._log("info", f"Live program: {field} {current} -> {level} ({steps} steps + START)")
+
     def _op_tower_reset(self, args, client):
         self.tower.clear()
 
@@ -1238,6 +1277,7 @@ class RaceLabApp:
         "estop.clear": _op_estop_clear,
         "mode.set": _op_mode,
         "car.program": _op_car_program,
+        "car.program_live": _op_car_program_live,
         "tower.reset": _op_tower_reset,
         "console.send": _op_console,
         "console.trace": _op_trace,

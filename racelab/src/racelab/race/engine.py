@@ -441,6 +441,10 @@ class RaceEngine:
         go = 2 <= prev <= 6 and phase in (0, 7)
         if phase in (0, 7):
             self._releasing = False
+        if phase >= 10 and prev < 10:
+            # the CU's short-circuit protection: track power cut for a few seconds,
+            # beeping with all lights blinking (phases 10..11)
+            self._emit("short_circuit", {"phase": phase})
         if self.state == "starting":
             if phase >= 8 and prev < 8:
                 self._false_start = True

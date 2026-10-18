@@ -967,3 +967,34 @@ body.bigscreen { background: #000; overflow: hidden; }
     scroll-behavior: auto !important;
   }
 }
+
+/* the CU's short-circuit show: a big banner, visible from across the room */
+.short-banner {
+  background: var(--stop);
+  color: #fff;
+  font-weight: 800;
+  font-size: clamp(1.1rem, 2.6vw, 1.8rem);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: .8em 1em;
+  border-radius: 12px;
+  margin: 8px 10px 0;
+  animation: pulse 1s infinite;
+}
+
+/* live level programming (CU keys) */
+.live-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.live-name { min-width: 110px; opacity: .9; }
+.live-slider { flex: 1; max-width: 320px; accent-color: var(--accent, #6db3f2); }
+.live-val { min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.live-actions { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.live-hint { margin: 0; opacity: .85; font-size: .9rem; }
+
+.recal-btn { border: 1px solid currentColor; background: none; color: inherit; border-radius: 8px; cursor: pointer; padding: 1px 8px; opacity: .55; }
+.recal-btn:hover, .recal-btn.on { opacity: 1; }
+.recal-edit { display: inline-flex; align-items: center; gap: 6px; }
+.recal-edit[hidden] { display: none; }
+.recal-sel { padding: 2px 4px; }
+.recal-ok { border: 0; background: none; color: #6ddf8f; cursor: pointer; font-size: 1.05rem; }
+.recal-no { border: 0; background: none; color: inherit; cursor: pointer; opacity: .55; font-size: 1.05rem; }

@@ -206,3 +206,54 @@ def test_classic_mode_and_stock_firmware(tmp_path):
             await stopped(app, client)
 
     run(main())
+
+
+def test_live_walk_steps():
+    from racelab.app import live_walk_steps
+
+    assert live_walk_steps(1, 10) == 1          # 10 wraps to 1 with one press
+    assert live_walk_steps(10, 1) == 9          # 1 -> .. -> 10
+    assert live_walk_steps(5, 5) == 0           # same level: open + validate only
+    assert live_walk_steps(6, 7) == 9           # 7 -> wrap -> 6
+    for bad in ((0, 5), (11, 5), (5, 0), (5, 11)):
+        try:
+            live_walk_steps(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad} should raise")
+
+
+def test_car_program_live_presses(tmp_path, monkeypatch):
+    import racelab.app as app_mod
+    monkeypatch.setattr(app_mod, "LIVE_PRESS_GAP_S", 0.01)
+
+    async def main():
+        app, client = await started(make_config(tmp_path, mode="classic"))
+        try:
+            r = await client.post("/api/car.program_live", json={"field": "speed", "level": 1, "current": 10})
+            assert (await r.json())["ok"]
+            for _ in range(150):                 # the link sends the queued presses
+                if len(app.sim.press_log) >= 3:
+                    break
+                await asyncio.sleep(0.02)
+            # open the display, one step, START validates: 10 -> 1 is a single press
+            assert app.sim.press_log[:3] == [5, 5, 2]
+
+            r = await client.post("/api/car.program_live", json={"field": "speed", "level": 5, "current": 1})
+            assert (await r.json())["ok"]
+            for _ in range(150):
+                if len(app.sim.press_log) >= 9:
+                    break
+                await asyncio.sleep(0.02)
+            # 1 -> 5 is four steps: open + 4 presses, then START
+            assert app.sim.press_log[3:9] == [5, 5, 5, 5, 5, 2]
+
+            r = await client.post("/api/car.program_live", json={"field": "wings", "level": 3, "current": 3})
+            assert "field" in (await r.json())["error"]
+            r = await client.post("/api/car.program_live", json={"field": "speed", "level": 12, "current": 10})
+            assert (await r.json())["ok"] is False
+        finally:
+            await app.stop()
+            await client.close()
+
+    run(main())

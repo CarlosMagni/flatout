@@ -1529,3 +1529,16 @@ def test_the_end_never_presses_during_the_cu_countdown():
     h.engine.stop()
     assert h.engine.state == "finished"
     assert len(h.actions.of("press")) == base
+
+
+def test_short_circuit_phases_emit_one_event_per_show():
+    """The CU's fault show (phases 10 -> 11 -> 0): one event per show, none while it lasts."""
+    h = Harness(3)
+    h.configure(type="race", laps=3)
+    _running(h)
+    h.status(10, at=10.0)
+    h.status(11, at=11.0)
+    h.status(0, at=12.0)
+    h.status(10, at=20.0)
+    shows = [e for e in h.events if e[0] == "short_circuit"]
+    assert len(shows) == 2

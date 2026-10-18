@@ -98,8 +98,9 @@ export class RaceView {
       this.inviteBtn);
     this.bots = h("section.bots.hidden", {}, this.invite, this.botsHead, this.botsGrid);
 
+    this.shortBanner = h("div.short-banner", { hidden: true }, t("race.short_banner"));
     this.root.append(
-      h("div.race", {}, this.bar, h("div.race-grid", {}, this.timing, this.bots, this.side)));
+      h("div.race", {}, this.shortBanner, this.bar, h("div.race-grid", {}, this.timing, this.bots, this.side)));
 
     this.fillFeed();
   }
@@ -134,9 +135,12 @@ export class RaceView {
     const type = store.meta?.session_types?.[sess.type];
     setText(this.typeLabel, sess.state === "idle" ? "RaceLab" : sessionLabel(sess.type));
     setText(this.title, sess.state === "idle" ? t("race.idle_title") : sess.title);
+    const shorted = (state.cu?.phase ?? 0) >= 10;
     this.stateChip.className = `chip ${STATE_CHIP[sess.state] || ""}`;
-    setText(this.stateChip, sess.false_start ? t("state.false_start") : STATE_LABEL[sess.state] || sess.state);
-    if (sess.false_start) this.stateChip.className = "chip stop";
+    setText(this.stateChip, shorted ? t("state.short_circuit")
+      : sess.false_start ? t("state.false_start") : STATE_LABEL[sess.state] || sess.state);
+    if (sess.false_start || shorted) this.stateChip.className = "chip stop";
+    this.shortBanner.hidden = !shorted;
 
     const running = state.cars.filter((c) => c.enabled && !c.eliminated).length;
     setText(this.subInfo, sess.type === "elimination" && sess.state !== "idle" ? t("race.on_track", { n: running }) : "");
@@ -412,6 +416,8 @@ export class RaceView {
     } else if (name === "fuel_low") {
       const car = this.state?.cars.find((c) => c.slot === data.slot);
       this.addFeed(t("feed.fuel_low", { name: car?.name || "#" + (data.slot + 1) }), "warn");
+    } else if (name === "short_circuit") {
+      this.addFeed(t("feed.short_circuit"), "error");
     }
   }
 

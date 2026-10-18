@@ -64,6 +64,7 @@ is `hello.client`),
 | `estop` / `estop.clear` | | emergency stop: throttle 0 on every bot |
 | `mode.set` | `mode: classic\|advanced` | outside a session only |
 | `car.program` | `slot`, `speed?`, `brake?`, `fuel?` (0..15) | program a car (outside a session) |
+| `car.program_live` | `field?`, `level`, `current?` (1..10) | set the level of the car on the track with the CU keys (SPEED/BRAKE/FUEL + START; the way that works on hardware 8) |
 | `laps` | `slot?` | all the laps of the session |
 | `results` | | ranking + laps |
 | `sessions.list` / `sessions.get` | `session_id` | recorded sessions (also `GET /api/sessions/<id>`) |

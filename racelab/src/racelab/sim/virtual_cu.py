@@ -70,6 +70,7 @@ class Simulator:
         self.bot_watchdog_s: float | None = BOT_WATCHDOG_S  # None: no watchdog (low-level tests)
         # stock C table (firmware V339: word_cycle_step reads it instead of the controller)
         self.ctl_table = [0] * 6  # low nibble throttle, bit 4 lane button, 0 = no host value
+        self.press_log: list[int] = []  # every T press, in order (tests)
         self.ctl_expire_at = 0.0
         # CU
         self.t = 0.0  # simulated time (s); the CU clock is its truncation to ms
@@ -241,6 +242,7 @@ class Simulator:
             self._set_phase({7: 0, 8: 1}.get(self.phase, self.phase + 1))
 
     def _press(self, button: int) -> None:
+        self.press_log.append(button)
         if button == BUTTON_START:
             if self.phase in (0, 7):
                 self._set_phase(1)

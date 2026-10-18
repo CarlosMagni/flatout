@@ -199,6 +199,8 @@ be sent again from the first line (without `GB`).
 - `C` takes the cars away from their controllers: send it only for software
   drivers, and keep resending it while they are active (it expires after about
   750 ms, see [bot-protocol.md](bot-protocol.md)).
+- On hardware 8 (v8339) the CU **ignores `J`**: RaceLab sets a car's levels
+  with the CU keys instead (`car.program_live`, one car on the track).
 - Programming words 0, 1 and 2 **reprogram cars**, which remember the values
   permanently. Use them only from a setup screen, one car at a time on the
   track, never during a race.
