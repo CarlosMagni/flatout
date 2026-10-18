@@ -48,6 +48,13 @@ export async function copyText(text, button) {
 
 // ------------------------------------------------------------ start lights
 
+// a titled panel: the System and Settings pages are made of these
+export function panel(title, body, extra) {
+  return h("section.panel.sys-panel", {},
+    h("div.panel-head", {}, h("h2", { text: title }), h("span.spacer"), extra || null),
+    h("div.panel-body", {}, body));
+}
+
 export function Lights() {
   const leds = Array.from({ length: 5 }, () => h("i.light"));
   const el = h("div.lights", { title: t("lights.title"), role: "img", "aria-label": t("lights.title") }, leds);

@@ -3,7 +3,7 @@
 import { h, inkOn, setText, toggle, wallTime } from "../dom.js";
 import { LANGUAGES, lang, locale, setLang, t } from "../i18n.js";
 import { onEvent, request, store } from "../store.js";
-import { Segmented, Stepper, Toggle, confirmModal, copyText, fillConnectors, run, toast } from "../ui/components.js";
+import { Segmented, Stepper, Toggle, confirmModal, copyText, fillConnectors, panel, run, toast } from "../ui/components.js";
 import { FirmwarePanel } from "./firmware.js";
 import { ConnectChooser } from "./connect.js";
 import { HwTestPanel } from "./hwtest.js";
@@ -41,13 +41,6 @@ const REFUSED = /^[GEFCB]/; // bootloader, firmware, CU settings, bots
 const CONSOLE_MAX = 300;
 const LOG_MAX = 200;
 const GARAGE_KEY = "racelab.garage";
-const LIVE_KEY = "racelab.liveprogram";
-const LIVE_FIELDS = [
-  { id: "speed", def: 10 },  // factory levels (manual): speed 10, brake 10, tank 7
-  { id: "brake", def: 10 },
-  { id: "fuel", def: 7 },
-];
-
 // minimal example with the real client (racelab/client); the URL is this page's
 function pythonSnippet(url, token) {
   return `import asyncio
@@ -65,12 +58,6 @@ asyncio.run(main())`;
 
 // ------------------------------------------------------------ small helpers
 
-function panel(title, body, extra) {
-  return h("section.panel.sys-panel", {},
-    h("div.panel-head", {}, h("h2", { text: title }), h("span.spacer"), extra || null),
-    h("div.panel-body", {}, body));
-}
-
 function kv(label) {
   const value = h("dd");
   return { row: h("div.kv", {}, h("dt", { text: label }), value), value };
@@ -81,12 +68,6 @@ function readGarage() {
 }
 function writeGarage(data) {
   try { localStorage.setItem(GARAGE_KEY, JSON.stringify(data)); } catch { /* storage unavailable */ }
-}
-function readLive() {
-  try { return JSON.parse(localStorage.getItem(LIVE_KEY)) || {}; } catch { return {}; }
-}
-function writeLive(data) {
-  try { localStorage.setItem(LIVE_KEY, JSON.stringify(data)); } catch { /* storage unavailable */ }
 }
 
 // readable display of a raw frame (control bytes escaped)
@@ -109,7 +90,6 @@ export class SystemView {
 
     this.buildConnection();
     this.buildButtons();
-    this.buildLiveProgram();
     this.buildGarage();
     this.buildConsole();
     this.buildApi();
@@ -123,7 +103,7 @@ export class SystemView {
       h("h1.page", { text: t("nav.system") }),
       h("div.sys-cols", {},
         h("div.sys-col", {}, this.connPanel, this.buttonsPanel, this.consolePanel),
-        h("div.sys-col", {}, this.livePanel, this.apiPanel, this.connectorsPanel, this.fwPanel.el)),
+        h("div.sys-col", {}, this.apiPanel, this.connectorsPanel, this.fwPanel.el)),
       this.hwPanel.el,
       this.logPanel,
       this.foot));
@@ -227,100 +207,6 @@ export class SystemView {
         h("div.cu-row.four", {}, ...CU_BUTTONS.menu.map(make))),
       h("p.note", { text: t("sys.buttons_note") }),
     ]);
-  }
-
-  // ------------------------------------------------------------ live levels
-
-  buildLiveProgram() {
-    const mem = readLive();
-    this.liveSliders = {};
-    this.liveDirty = false;
-    this.liveRecal = {};
-    const rows = LIVE_FIELDS.map((f) => {
-      const start = String(mem[f.id] ?? f.def);
-      const value = h("output.live-val", { text: start });
-      const slider = h("input.live-slider", {
-        type: "range", min: "1", max: "10", step: "1", value: start,
-        "aria-label": t(`garage.${f.id}`),
-      });
-      slider.addEventListener("input", () => { value.textContent = slider.value; sync(); });
-      const sel = h("select.recal-sel", {}, ...Array.from({ length: 10 }, (_, i) => h("option", { value: String(i + 1) }, String(i + 1))));
-      const ok = h("button.recal-ok", { type: "button", title: t("live.recal_ok"), onclick: () => this.recalibrate(f.id, true) }, "\u2713");
-      const no = h("button.recal-no", { type: "button", title: t("live.recal_cancel"), onclick: () => this.recalibrate(f.id, false) }, "\u2715");
-      const edit = h("span.recal-edit", { hidden: true }, sel, ok, no);
-      const recal = h("button.recal-btn", { type: "button", title: t("live.recal_tip"), "aria-label": t("live.recal_tip"), onclick: () => this.recalibrate(f.id) }, "\u21bb " + t("live.recal"));
-      this.liveRecal[f.id] = { sel, edit, recal };
-      this.liveSliders[f.id] = slider;
-      return h("div.live-row", {}, h("span.live-name", { text: t(`garage.${f.id}`) }), slider, value, recal, edit);
-    });
-    this.liveGo = h("button.btn.primary", { type: "button", disabled: true, onclick: () => this.liveProgram() }, t("live.go"));
-    this.liveHint = h("p.live-hint");
-    const sync = () => {
-      const mem2 = readLive();
-      const dirty = LIVE_FIELDS.filter((f) => Number(this.liveSliders[f.id].value) !== (mem2[f.id] ?? f.def));
-      this.liveDirty = dirty.length > 0;
-      this.liveGo.disabled = !this.liveDirty;
-      setText(this.liveHint, dirty.length
-        ? dirty.map((f) => {
-            const from = mem2[f.id] ?? f.def;
-            const steps = (Number(this.liveSliders[f.id].value) - from + 10) % 10;
-            return t("live.plan", { field: t(`garage.${f.id}`), from, to: this.liveSliders[f.id].value, n: steps });
-          }).join("   ·   ")
-        : t("live.clean"));
-    };
-    this.liveSync = sync;
-    sync();
-    this.livePanel = panel(t("sys.live_program"), h("div.car-setup", {},
-      ...rows,
-      h("div.live-actions", {}, this.liveGo, this.liveHint),
-      h("p.warn-line", { text: t("live.warn") }),
-      h("p.note", { text: t("live.note") })));
-  }
-
-  async recalibrate(field, confirm) {
-    const r = this.liveRecal[field];
-    if (confirm === undefined) {
-      r.edit.hidden = !r.edit.hidden;
-      r.recal.classList.toggle("on", !r.edit.hidden);
-      if (!r.edit.hidden) {
-        r.sel.value = this.liveSliders[field].value;
-        await run("cu.press", { button: field });  // the CU shows that level display
-        toast(t("live.recal_open"));
-      }
-      return;
-    }
-    if (confirm) {
-      const mem = readLive();
-      mem[field] = Number(r.sel.value);
-      writeLive(mem);
-      toast(t("live.recal_done", { field: t(`garage.${field}`), level: r.sel.value }));
-    }
-    r.edit.hidden = true;
-    r.recal.classList.remove("on");
-    await run("cu.press", { button: "pace" });     // leave the display, nothing validated
-    this.liveSync();
-    this.sig = null;
-    if (store.state) this.update(store.state);
-  }
-
-  async liveProgram() {
-    const mem = readLive();
-    const dirty = LIVE_FIELDS.filter((f) => Number(this.liveSliders[f.id].value) !== (mem[f.id] ?? f.def));
-    if (!dirty.length) return;
-    this.liveGo.disabled = true;
-    for (const f of dirty) {
-      const current = mem[f.id] ?? f.def;
-      const level = Number(this.liveSliders[f.id].value);
-      try {
-        await run("car.program_live", { field: f.id, level, current },
-          t("live.done", { field: t(`garage.${f.id}`), from: current, to: level }));
-        mem[f.id] = level;
-        writeLive(mem);
-      } catch { break; /* toast already shown */ }
-    }
-    this.liveSync();
-    this.sig = null;  // force the next update to re-evaluate the button state
-    if (store.state) this.update(store.state);
   }
 
   // ------------------------------------------------------------ garage
@@ -570,15 +456,13 @@ export class SystemView {
     const busy = !IDLE_STATES.has(sess.state);
     const connected = store.online && state.link?.state === "connected";
     const advanced = state.mode === "advanced";
-    const sig = `${state.mode}|${busy}|${connected}|${this.liveDirty}`;
+    const sig = `${state.mode}|${busy}|${connected}`;
     if (sig === this.sig) return;
     this.sig = sig;
 
     this.cuButtons.forEach((b) => { b.disabled = !connected; });
     this.garageRows.forEach((row) => row.setEnabled(connected && !busy));
     this.garagePanel.classList.toggle("locked", busy);
-    this.liveGo.disabled = !connected || busy || !this.liveDirty;
-    this.livePanel.classList.toggle("locked", busy);
 
     toggle(this.consolePanel, "hidden", !advanced);
     this.sendBtn.disabled = !connected;

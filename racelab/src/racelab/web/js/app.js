@@ -1,16 +1,18 @@
 // Shell: router, top bar, keyboard shortcuts.
 import { h, setText, toggle } from "./dom.js";
 import { t, translateStatic } from "./i18n.js";
-import { botsUnavailable, connect, onEvent, onState, refreshMeta, store } from "./store.js";
+import { botsUnavailable, connect, onEvent, onState, refreshMeta, request, store } from "./store.js";
 import { estopButton, noteEstop, run, toast } from "./ui/components.js";
 import { RaceView } from "./views/race.js";
 import { SetupView } from "./views/setup.js";
 import { HistoryView } from "./views/history.js";
 import { SystemView } from "./views/system.js";
+import { SettingsView } from "./views/settings.js";
+import { hub } from "./input.js";
 import { ScreenView } from "./views/screen.js";
 
 // `ecran` is the former (French) name of the big-screen route, kept for old bookmarks
-const ROUTES = { race: RaceView, setup: SetupView, history: HistoryView, system: SystemView, screen: ScreenView, ecran: ScreenView };
+const ROUTES = { race: RaceView, setup: SetupView, history: HistoryView, settings: SettingsView, system: SystemView, screen: ScreenView, ecran: ScreenView };
 const viewRoot = document.getElementById("view");
 translateStatic(); // static texts of index.html
 let current = null;
@@ -138,10 +140,21 @@ document.addEventListener("keydown", (ev) => {
   else if (!ev.repeat) toast(t("estop.already"), "stop");
 });
 
+// external controllers: keyboard / gamepad drive a slot on the manual path
+// (advanced mode: the bot commands are what actually moves the car)
+hub.setSinks({
+  throttle: (slot, value) => { if (store.state?.mode === "advanced") request("bot.throttle", { slot, value }).catch(() => {}); },
+  lane: (slot) => { if (store.state?.mode === "advanced") request("bot.lane", { slot }).catch(() => {}); },
+  estop: () => { if (store.state?.mode === "advanced") run("estop").catch(() => {}); },
+  status: (key) => toast(t(key), "warn"),
+});
+hub.start();
+
 // ------------------------------------------------------------ startup
 
 onState((state) => {
   updateTopbar(state);
+  if (state) hub.setPaused(!!state.estop);
   if (state) current?.update?.(state);
 });
 onEvent("hello", () => current?.hello?.());

@@ -5,6 +5,7 @@ import {
 import { t, tOr } from "../i18n.js";
 import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
 import { FuelGauge, Fader, fillConnectors, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
+import { hub } from "../input.js";
 import { ConnectChooser } from "./connect.js";
 
 const LAP_MODES = new Set(["race", "rival", "elimination"]);
@@ -510,12 +511,13 @@ class BotCard {
     this.gasLabel = h("small");
     this.gas = h("div.gas", {}, this.gasValue, this.gasLabel);
     this.note = h("div.bot-note");
+    this.padChip = h("span.pad-chip", { hidden: true });
     this.lane = h("button.btn.sm", { title: t("bot.lane_title"), onclick: () => run("bot.lane", { slot }).catch(() => {}) }, t("bot.lane"));
     this.unlock = h("button.btn.sm.unlock", { title: t("bot.unlock_title"), onclick: () => this.toggleUnlock() }, t("bot.unlock_off"));
     this.gear = h("button.btn.sm", { title: t("bot.settings_title"), onclick: () => this.openProfile() }, t("bot.settings"));
     this.spark = Spark();
     this.el = h("div.bot", { role: "group" },
-      h("div.bot-head", {}, this.carno, this.name, this.toggle.el),
+      h("div.bot-head", {}, this.carno, this.name, this.padChip, this.toggle.el),
       this.seg.el,
       h("div.bot-body", {}, h("div.fader-col", {}, this.fader.el, this.fader.zero), h("div.bot-readout", {}, this.gas, this.note)),
       h("div.bot-actions", {}, this.lane, this.unlock, this.gear),
@@ -529,6 +531,9 @@ class BotCard {
     this.carno.style.color = inkOn(color);
     setText(this.carno, this.slot + 1);
     setText(this.name, car?.name || t("bot.slot", { n: this.slot + 1 }));
+    const mapped = hub.playerFor(this.slot);
+    this.padChip.hidden = !mapped;
+    if (mapped) setText(this.padChip, mapped.type === "gamepad" ? "\ud83c\udfae" : "\u2328\ufe0f");
     const who = this.name.textContent;
     this.el.setAttribute("aria-label", who);
     this.fader.el.setAttribute("aria-label", t("bot.fader_aria", { name: who }));
