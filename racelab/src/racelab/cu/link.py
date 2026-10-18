@@ -391,7 +391,18 @@ class CULink:
             self.version = cu.version()
         except (CommandRejected, CUTimeoutError) as e:
             raise LinkLost("the CU does not give its version (powered off, or stuck in update mode?)") from e
-        module = cu.probe_bots()
+        try:
+            module = cu.probe_bots()
+        except CUTimeoutError:
+            # Hardware-8 (STM32, v8xxx) CUs answer the version and the status but silently
+            # ignore unknown commands (no '#' refusal): prove the link is alive with a
+            # status poll, then treat the missing B answer as "stock firmware" (no module).
+            try:
+                cu.poll_message()
+            except (CUTimeoutError, CommandRejected) as e:
+                raise LinkLost("the CU does not answer at all (powered off?)") from e
+            module = False
+            logger.info("the CU answers but ignores B/A (hardware 8?): no bot module")
         transport = self._choose_transport(self.version, module)
         self._rebooting = False
         with self._lock:
@@ -525,7 +536,8 @@ class CULink:
 
     def _choose_transport(self, version: str | None, module: bool) -> str | None:
         """C on a V338/V339 CU (stock or ours: no custom firmware needed), else B if the module answers."""
-        ctl = bool(version) and version[1:4] in CTL_FIRMWARES
+        ctl = (bool(version) and version[1:4] in CTL_FIRMWARES
+               and version[0] == "5")  # hw8 (v8xxx) is mute to C, A and B (probed 2026-10-18)
         pref = self._cfg.bot_transport
         if pref == "C":
             return "C" if ctl else None

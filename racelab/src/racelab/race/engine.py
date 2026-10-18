@@ -429,6 +429,11 @@ class RaceEngine:
         self._resuming = self._releasing = False
         self._set_state("finished")
         self._refresh()
+        # Session over: hold the cars on the CU (one Start press arms it — the cars do
+        # not move until the next start). Only from a freely running CU: never during
+        # its countdown (phases 2..6) nor a fault show (>= 8, short circuit).
+        if self._phase == 0:
+            self._press_start(now)
 
     # ----------------------------------------------------------------- CU: phases
 

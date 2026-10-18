@@ -1491,3 +1491,41 @@ def test_random_message_storm_never_breaks_invariants(kind):
             if car["position"] is None:
                 assert car["laps"] == 0
         assert all(l["ms"] > 0 for l in h.engine.laps())
+
+
+def _running(h) -> None:
+    """Drive a harness to `running` through the CU start sequence."""
+    h.engine.start()
+    h.status(1, at=0.2)
+    h.tick(1.0)
+    for i, phase in enumerate(range(2, 7)):
+        h.status(phase, at=2.0 + i)
+    h.status(7, at=3.0)
+    h.status(0, at=3.2)
+
+
+def test_the_end_of_a_session_holds_the_cars_on_the_cu():
+    """The practice ends: one Start press arms the CU, the cars do not move."""
+    h = Harness(3)
+    h.configure(type="race", laps=3)
+    _running(h)
+    assert h.engine.state == "running"
+    base = len(h.actions.of("press"))
+    h.engine.stop()
+    assert h.engine.state == "finished"
+    assert h.actions.of("press")[base:] == [(BUTTON_START,)]
+
+
+def test_the_end_never_presses_during_the_cu_countdown():
+    """Session ends while the CU is counting down: leave the CU alone."""
+    h = Harness(3)
+    h.configure(type="race", laps=3)
+    h.engine.start()
+    h.status(1, at=0.2)
+    h.tick(1.0)
+    for i, phase in enumerate(range(2, 7)):
+        h.status(phase, at=2.0 + i)
+    base = len(h.actions.of("press"))
+    h.engine.stop()
+    assert h.engine.state == "finished"
+    assert len(h.actions.of("press")) == base
