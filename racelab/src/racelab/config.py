@@ -55,6 +55,9 @@ class ConnectionConfig:
     # how software drivers reach the cars: "auto" = the stock C table on a V339 CU
     # (no custom firmware needed), else the B command of the bot module; "C" / "B" force one
     bot_transport: str = "auto"
+    # serial port of the Pico controller interface (tools/pico_controllers/, e.g. the HC-05's
+    # /dev/cu.HC-05): when set, the bots go through it on any CU; empty = none
+    pico: str = ""
 
 
 @dataclass
@@ -142,6 +145,7 @@ class Config:
     # value is saved, never a command-line option
     connection_choice: dict[str, Any] | None = None
     mode_choice: str | None = None  # last mode chosen in the UI (same: never the command line)
+    pico_choice: str | None = None  # Pico port chosen in the UI ("" = removed), kept apart from the CU
 
     @property
     def data_path(self) -> Path:
@@ -152,6 +156,7 @@ class Config:
         d.pop("source", None)
         d.pop("connection_choice", None)
         d.pop("mode_choice", None)
+        d.pop("pico_choice", None)
         return d
 
 
@@ -188,6 +193,10 @@ def _merge(cfg: Config, data: dict[str, Any]) -> None:
         elif key == "connection_choice":
             if value:
                 apply_connection_choice(cfg, value)
+        elif key == "pico_choice":
+            if not isinstance(value, str):
+                raise ConfigError(f"invalid saved Pico port: {value!r}")
+            cfg.connection.pico = cfg.pico_choice = value
         elif key == "mode_choice":
             if value not in ("classic", "advanced"):
                 raise ConfigError(f"invalid saved mode: {value!r}")
@@ -272,6 +281,8 @@ def save_overrides(cfg: Config) -> Path:
         "race": {"session": cfg.race.session},
         "bots": cfg.bots,
     }
+    if cfg.pico_choice is not None:
+        data["pico_choice"] = cfg.pico_choice
     if cfg.connection_choice:
         data["connection_choice"] = cfg.connection_choice
     if cfg.mode_choice:

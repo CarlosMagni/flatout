@@ -151,9 +151,69 @@ export class SystemView {
     this.simBox = h("div.sim-box.hidden", {}, this.drop,
       h("p.note", { text: t("sys.drop_note") }));
     this.chooser = new ConnectChooser({ compact: true });
+    this.buildPico();
     this.connPanel = panel(t("sys.connection"), [
       h("dl.kv-list", {}, ...Object.values(rows).map((r) => r.row)), this.simBox,
-      h("div.eyebrow", { text: t("sys.change_cu"), style: { margin: "18px 0 10px" } }), this.chooser.el]);
+      h("div.eyebrow", { text: t("sys.change_cu"), style: { margin: "18px 0 10px" } }), this.chooser.el,
+      h("div.eyebrow", { text: t("sys.pico.eyebrow"), style: { margin: "18px 0 10px" } }), this.picoBox]);
+  }
+
+  // the Pico controller interface (tools/pico_controllers): its own serial port, next to the CU's
+  buildPico() {
+    this.picoChip = h("span.chip.hidden");
+    this.picoDevice = h("div.cx-desc");
+    this.picoResults = h("div.cx-results.hidden");
+    this.picoRemove = h("button.btn.ghost.sm.hidden", { type: "button", onclick: () => this.setPico("") }, t("sys.pico.remove"));
+    this.picoScan = h("button.btn", { type: "button", onclick: () => this.scanPico() }, t("connect.search_ports"));
+    this.picoBox = h("div.cx.compact", {},
+      h("div.cx-list", {}, h("div.cx-row", {},
+        h("div.cx-text", {}, h("div.cx-title", {}, t("sys.pico.title"), this.picoChip),
+          h("div.cx-desc", { text: t("sys.pico.text") }), this.picoDevice),
+        h("div.cx-actions", {}, this.picoScan, this.picoRemove))),
+      this.picoResults);
+  }
+
+  updatePico(link) {
+    const device = link.pico_device;
+    const state = device ? link.pico || "idle" : null;
+    toggle(this.picoChip, "hidden", !state);
+    if (state) {
+      const cls = `chip ${{ connected: "go", lost: "stop", connecting: "caution" }[state] || ""}`.trim();
+      if (this.picoChip.className !== cls) this.picoChip.className = cls;
+      setText(this.picoChip, t(`sys.pico.state_${state}`));
+    }
+    setText(this.picoDevice, device ? device + (link.pico_error ? ` · ${link.pico_error}` : "") : t("sys.pico.none"));
+    toggle(this.picoDevice, "mono", !!device);
+    toggle(this.picoRemove, "hidden", !device);
+  }
+
+  async scanPico() {
+    this.picoScan.disabled = true;
+    toggle(this.picoResults, "hidden", false);
+    this.picoResults.replaceChildren(h("p.faint", { text: t("sys.pico.scanning") }));
+    try {
+      const res = await request("pico.scan", {});
+      this.picoResults.replaceChildren(...(res.ports.length
+        ? res.ports.map((p) => h("div.cx-device", {},
+          h("div", {}, h("div", { text: p.label }), h("div.mono.faint", { text: p.device })),
+          h("button.btn.primary.sm", { type: "button", onclick: () => this.setPico(p.device) }, t("sys.pico.use"))))
+        : [h("p.faint", { text: t("sys.pico.no_ports") })]));
+    } catch (e) {
+      this.picoResults.replaceChildren();
+      toast(e.message, "error", 5000);
+    } finally {
+      this.picoScan.disabled = false;
+    }
+  }
+
+  async setPico(device) {
+    try {
+      await run("pico.set", { device });
+      this.picoResults.replaceChildren();
+      toggle(this.picoResults, "hidden", true);
+    } catch {
+      /* toast already shown */
+    }
   }
 
   updateLink(state) {
@@ -173,7 +233,7 @@ export class SystemView {
     const bots = link.bots_supported;
     const botsCls = bots === true ? "chip go" : bots === false ? "chip caution" : "chip";
     if (this.botsChip.className !== botsCls) this.botsChip.className = botsCls;
-    const ready = { C: t("sys.bots_ready_stock"), B: t("sys.bots_ready_module") }[link.bot_transport] || t("sys.bots_detected");
+    const ready = { C: t("sys.bots_ready_stock"), B: t("sys.bots_ready_module"), P: t("sys.bots_ready_pico") }[link.bot_transport] || t("sys.bots_detected");
     setText(this.botsChip, bots === true ? ready : bots === false ? t("sys.bots_stock") : t("sys.bots_unknown"));
 
     const rtt = link.rtt_ms;
@@ -189,6 +249,7 @@ export class SystemView {
     const sim = link.transport === "sim";
     toggle(this.simBox, "hidden", !sim);
     if (state) this.chooser.update(state);
+    this.updatePico(link);
     this.drop.disabled = !online || link.state !== "connected";
   }
 

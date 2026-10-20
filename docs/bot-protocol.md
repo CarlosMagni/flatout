@@ -5,10 +5,11 @@ A **software driver** ("bot") holds the throttle of a controller slot (addresses
 track at its normal rate (each slot refreshed every ~75 ms), so the car behaves
 exactly as if someone held a controller.
 
-RaceLab can reach the cars two ways. Both give the same result on the track and
-the same per-slot model in the app (human / bot at throttle *n* / lane change);
-RaceLab picks one by itself (`bot_transport = "auto"` in the
-[configuration](../racelab/racelab.example.toml)):
+RaceLab can reach the cars two ways through the CU, plus a third one around its
+firmware ([`P`](#p--the-pico-controller-interface), any CU, hardware 8 included).
+They give the same result on the track and the same per-slot model in the app
+(human / bot at throttle *n* / lane change); RaceLab picks one by itself
+(`bot_transport = "auto"` in the [configuration](../racelab/racelab.example.toml)):
 
 | | `C` — stock CU | `B` — bot firmware module |
 |---|---|---|
@@ -139,6 +140,24 @@ Examples (without framing):
 - **Firmware watchdog** (v339-bot.5 and later): a bot slot that receives no
   throttle command for about one second (13 rail cycles) gets throttle 0 and
   stays a bot. RaceLab resends each active bot's throttle every 500 ms.
+
+## `P` — the Pico controller interface
+
+For a CU where neither `C` nor `B` exists (hardware 8, STM32): a Raspberry Pi Pico
+plugged into the CU's **controller socket 1** plays the 6 hand controllers, on the
+line the WIRELESS+ receiver uses (contact 1, data to the CU; contact 2, ground). The
+CU decodes its words exactly as a receiver's, so start lights, false starts and fuel
+apply as to hand controllers. Hardware, wiring, timings and checks:
+[`tools/pico_controllers/`](../tools/pico_controllers/README.md).
+
+- **Frame**: the `C` frame above, serial framing (`"C…$`), sent to the Pico's serial
+  port (an HC-05 Bluetooth module, 9600 8N1) instead of the CU. The Pico does not answer.
+- **Expiry**: like the CU's table, the Pico hands every slot back ~750 ms after its last
+  valid frame (it stops sending their words; the CU falls back to the sockets).
+- **RaceLab**: `P` is chosen whenever a Pico port is set (System → Connection, or
+  `[connection] pico`); the CU link still provides timing and status. The port has its
+  own writer thread; if it drops, the bots are held at throttle 0 and restart from 0
+  once it is back.
 
 ## Safety rules for applications (both commands)
 

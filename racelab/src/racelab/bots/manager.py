@@ -202,6 +202,11 @@ class BotManager:
         self.link_state = st.state
         self.bots_supported = st.bots_supported
 
+    def outage(self) -> None:
+        """The way to the cars came back after an outage outside the CU link (the Pico's port):
+        same as a reconnection, every bot restarts from throttle 0."""
+        self._reconnected = True
+
     def on_engine_event(self, name: str, data: dict[str, Any]) -> None:
         if name == "lap":
             s = self._slot_or_none(data["slot"])

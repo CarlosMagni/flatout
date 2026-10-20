@@ -59,8 +59,17 @@ class LinkState:
     version: str | None = None  # ex. "5339"
     bots_supported: bool | None = None  # software drivers available (C or B); None = not probed yet
     error: str | None = None
-    bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | None
+    bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | "P" (Pico) | None
     bot_module: bool | None = None  # the bot firmware module answers B
+
+
+@dataclass(frozen=True)
+class PicoState:
+    """Port of the Pico controller interface (cu/pico.py), emitted on every transition."""
+
+    state: str  # "connecting" (never opened yet) | "connected" | "lost"
+    device: str | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True)

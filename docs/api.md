@@ -83,6 +83,8 @@ is `hello.client`),
 | `console.trace` | `polls` (bool) | include the `?` polls in the raw-frame subscription |
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |
 | `cu.connect` | `transport: none\|ble\|serial\|sim`, `device?`, `stock?` | switch CU (outside a session): bots are stopped and handed back on the old one first; the choice is remembered |
+| `pico.scan` | — | serial ports a Pico controller interface could be on, Bluetooth ones included: `{ports: [{device, label}], current}` |
+| `pico.set` | `device` (serial port, `""` = remove) | choose the Pico controller interface ([bot-protocol.md](bot-protocol.md#p--the-pico-controller-interface)), outside a session: the link restarts, the bots go through it on a real CU; the choice is remembered |
 | `app.quit` | | stop RaceLab: bots cut and handed back (refused during a firmware update) |
 | `link.bench` | `n?` (1..300, default 100) | hardware test: times `n` round trips of the CU's poll (nothing that can move a car); the `C` acknowledgement time comes from the frames the link sends, plus an idle "every slot on its controller" frame when no bot is active (never a frame that changes a bot). Returns `{n, answered, lost, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms, histogram: [{from_ms, to_ms, count}], c_ack: {n, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms} \| null, duration_ms, timed_out, transport, bot_transport}` (`timed_out`: the wait ended before `n` answers, the partial data is returned). p95 = nearest rank; jitter = mean absolute difference between consecutive samples |
 | `test.pulse` | `slot`, `throttle` (1..6), `ms` (200..2000) | hardware test: the server takes the slot as a bot, holds the throttle for `ms` (clock started once the CU link applied it), then forces 0 and hands the slot back, in a `finally` (also on error, cancellation or a closed client). Out-of-range values are refused, never clamped; `[safety] max_throttle` can only lower the throttle. Returns `{slot, throttle, ms, acked, held_ms, applied_peak, gate, aborted: null\|estop\|link\|session, zeroed, released}` |
@@ -114,7 +116,9 @@ See [architecture.md](architecture.md) §4 for `session`, `cu`, `cars`. In addit
   "estop": false,
   "link": {"state": "connected", "transport": "ble", "version": "5339",
            "bots_supported": true,   // software drivers available on this CU
-           "bot_transport": "C",     // "C" (stock CU) | "B" (bot firmware module) | null
+           "bot_transport": "C",     // "C" (stock CU) | "B" (bot firmware module) | "P" (Pico) | null
+           "pico": null,             // Pico port: "connecting" | "connected" | "lost" | null (none, or virtual CU)
+           "pico_device": null, "pico_error": null,
            "bot_module": false,      // the bot firmware module answered
            "rtt_ms": 21.4, "rx_per_s": 38.0, "error": null, …},
   "bots": [{"slot": 0, "active": true, "driver": "api", "throttle": 7, "requested": 7,

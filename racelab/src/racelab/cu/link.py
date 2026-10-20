@@ -1,7 +1,8 @@
 """The link to the Control Unit: a single thread that owns the connection.
 
 Responsibilities (docs/bot-protocol.md, safety rules):
-- connection + automatic reconnection, version read, bot transport (stock C table or B module);
+- connection + automatic reconnection, version read, bot transport (stock C table, B module,
+  or the Pico controller interface on the controller socket: same C frame, own serial port);
 - continuous `?` poll -> StatusMsg / TimerMsg;
 - command queue (buttons, position tower, programming);
 - bot throttle: coalescing (≤ 1 send per slot per rail cycle), heartbeat,
@@ -33,11 +34,13 @@ from ..events import (
     FirmwareProgress,
     LinkState,
     LinkStats,
+    PicoState,
     RawFrame,
     StatusMsg,
     TimerMsg,
 )
 from .bench import C_PROBES, Bench
+from .pico import PicoWriter
 from .unit import FORBIDDEN_LETTERS, CommandRejected, Parsed, RaceControlUnit
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,8 @@ class CULink:
         conn_cfg: ConnectionConfig,
         safety: SafetyConfig,
         emit: Callable[[object], None],
+        pico_opener: Callable[[], object] | None = None,
+        pico_device: str | None = None,
     ):
         self._opener = opener
         self._transport = transport
@@ -136,10 +141,15 @@ class CULink:
         self._ever_connected = False
         self._stats = {"rx": 0, "tx": 0, "bot": 0}
         self._rtt: float | None = None
+        # the Pico controller interface (cu/pico.py): when set, the bots go through it ("P")
+        self._pico_device = pico_device
+        self._pico = PicoWriter(pico_opener, self._pico_changed) if pico_opener else None
 
     # ------------------------------------------------------------ lifecycle
 
     def start(self) -> None:
+        if self._pico is not None:
+            self._pico.start()
         self._thread = threading.Thread(target=self._run, name="cu-link", daemon=True)
         self._thread.start()
 
@@ -151,6 +161,8 @@ class CULink:
             self._thread.join(timeout)
             if self._thread.is_alive():
                 logger.error("the link thread did not stop in time")
+        if self._pico is not None:
+            self._pico.stop()  # writes the release frame queued by _shutdown, if any
 
     # ------------------------------------------------------------ API bots
 
@@ -412,11 +424,11 @@ class CULink:
             target = list(self._target)
             self._hb_pause_until = 0.0
             self._ctl_last, self._lane_until = None, [0.0] * 6
-        if transport == "C":
+        if transport in ("C", "P"):
             # throttle 0 on the app's bots, every other slot on its controller
             values = [0 if target[slot] is not None else None for slot in BOT_SLOTS]
             try:
-                cu.setctl(values)
+                self._send_ctl(cu, values)
             except CommandRejected:
                 # e.g. an adapter that filters C: fall back to the bot module if there is one
                 logger.error("the CU (or its adapter) rejects the C command")
@@ -474,7 +486,7 @@ class CULink:
                 last_stats = now
 
     def _service(self, cu: RaceControlUnit) -> None:
-        if self.bot_transport == "C":
+        if self.bot_transport in ("C", "P"):
             self._service_ctl(cu)
         elif self.bot_transport == "B":
             self._service_bots(cu)
@@ -535,7 +547,10 @@ class CULink:
                     logger.warning("lane change refused (slot %d)", slot)
 
     def _choose_transport(self, version: str | None, module: bool) -> str | None:
-        """C on a V338/V339 CU (stock or ours: no custom firmware needed), else B if the module answers."""
+        """P when a Pico is set up (any CU, hardware 8 included), else C on a V338/V339 CU (stock or
+        ours: no custom firmware needed), else B if the module answers."""
+        if self._pico is not None:
+            return "P"
         ctl = (bool(version) and version[1:4] in CTL_FIRMWARES
                and version[0] == "5")  # hw8 (v8xxx) is mute to C, A and B (probed 2026-10-18)
         pref = self._cfg.bot_transport
@@ -572,7 +587,7 @@ class CULink:
                 or (active and not paused and now - sent_at >= heartbeat)):
             return
         try:
-            cu.setctl(list(target), lanes)
+            self._send_ctl(cu, target, lanes)
         except CommandRejected:
             logger.error("the CU (or its adapter) rejects the C command")
             with self._lock:
@@ -583,13 +598,33 @@ class CULink:
             return
         with self._lock:
             self._ctl_last, self._ctl_sent_at = frame, now
-        if bench is not None and cu.last_rtt is not None:
+        if bench is not None and self.bot_transport == "C" and cu.last_rtt is not None:
             bench.c.append(cu.last_rtt)
         self._stats["bot"] += 1
         for slot in BOT_SLOTS:
             if target[slot] is not None or last is None or last[0][slot] is not None:
                 self._mark_sent(slot, target[slot])
                 self._emit(BotSent(slot, target[slot], lane=slot in pressed, host_t=time.monotonic()))
+
+    def _send_ctl(self, cu: RaceControlUnit, values, lanes=()) -> None:
+        """A C frame to whoever holds the controller table: the CU itself, or the Pico (no answer:
+        the frame is queued for its writer thread, never waited on)."""
+        if self.bot_transport == "P":
+            self._pico.send(b'"' + RaceControlUnit.ctl_frame(list(values), lanes) + b"$")
+        else:
+            cu.setctl(list(values), lanes)
+
+    def _pico_changed(self, state: str, error: str | None) -> None:
+        """From the Pico's writer thread. Port lost: throttle 0 and hold, as on a CU link loss (the
+        Pico itself hands the slots back ~750 ms after the last frame it got)."""
+        if state == "lost":
+            with self._lock:
+                self._zero_targets()
+                if any(t is not None for t in self._target):
+                    self._holds.add("reconnect")
+                self._sent = [_UNKNOWN] * 6
+                self._ctl_last = None
+        self._emit(PicoState(state, self._pico_device, error))
 
     def _send_bot(self, cu: RaceControlUnit, slot: int, value: int | None) -> None:
         try:
@@ -639,12 +674,12 @@ class CULink:
             transport = self.bot_transport
         if not supported:
             return
-        if transport == "C":
+        if transport in ("C", "P"):
             try:
                 if self._safety.release_on_exit:
-                    cu.setctl([None] * 6)
+                    self._send_ctl(cu, [None] * 6)
                 else:
-                    cu.setctl([0 if s in active else None for s in BOT_SLOTS])
+                    self._send_ctl(cu, [0 if s in active else None for s in BOT_SLOTS])
             except Exception:
                 logger.warning("could not release the C table (it expires by itself in ~0.75 s)")
             return
@@ -719,9 +754,9 @@ class CULink:
     def unsafe_slots(self) -> list[int]:
         """Slots whose last throttle acknowledged by the CU was not 0 (link lost at shutdown).
 
-        None with the C table: the CU drops it by itself ~0.75 s after the last frame."""
+        None with the C table (CU or Pico): it is dropped by itself ~0.75 s after the last frame."""
         with self._lock:
-            if self.bot_transport == "C":
+            if self.bot_transport in ("C", "P"):
                 return []
             return [s for s in BOT_SLOTS if self._last_known[s] not in (None, 0)]
 

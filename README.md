@@ -67,7 +67,10 @@ not switched on is driven by its controller.
 If the app goes silent (killed, Bluetooth lost), the CU itself gives every car
 back to its controller after about 750 ms. The command is specified in
 [`docs/bot-protocol.md`](docs/bot-protocol.md). An older CU (V336, V337) does not
-have it: update it to the stock V339 first (System → Advanced options).
+have it: update it to the stock V339 first (System → Advanced options). A
+hardware-8 CU (STM32) has neither: a Raspberry Pi Pico on the controller socket can
+play the controllers instead ([`tools/pico_controllers/`](tools/pico_controllers/README.md),
+not yet tried on a hardware-8 CU).
 
 ## Advanced: flash a CU firmware
 

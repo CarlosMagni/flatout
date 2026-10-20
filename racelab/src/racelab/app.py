@@ -25,6 +25,7 @@ from .bots.profiles import PROFILE_LABELS, PROFILES
 from .config import Config, apply_connection_choice, save_overrides
 from .cu.firmware import FirmwareLibrary, ImageError, build_images, can_build, missing_images
 from .cu.link import CULink
+from .cu.pico import list_ports, open_port
 from .events import (
     BUTTON_BRAKE,
     BUTTON_CODE,
@@ -36,6 +37,7 @@ from .events import (
     FirmwareProgress,
     LinkState,
     LinkStats,
+    PicoState,
     RawFrame,
     StatusMsg,
     TimerMsg,
@@ -72,7 +74,7 @@ def live_walk_steps(level: int, current: int) -> int:
 # during a flash, only these commands go through (reads + flash control)
 FIRMWARE_SAFE_OPS = frozenset({
     "state", "meta", "log", "laps", "results", "sessions.list", "sessions.get",
-    "firmware.images", "firmware.status", "firmware.abort", "firmware.build_status", "cu.scan",
+    "firmware.images", "firmware.status", "firmware.abort", "firmware.build_status", "cu.scan", "pico.scan",
     "track.set", "track.positions", "track.clear", "connector.set", "connector.clear",
 })
 FIRMWARE_CONFIRM = "FLASH"
@@ -160,6 +162,7 @@ class RaceLabApp:
             "state": "connecting", "transport": cfg.connection.transport, "device": None,
             "version": None, "bots_supported": None, "bot_transport": None, "bot_module": None,
             "error": None, "rtt_ms": None, "rx_per_s": 0.0, "tx_per_s": 0.0, "bot_tx_per_s": 0.0, "queue": 0,
+            "pico": None, "pico_device": None, "pico_error": None,
         }
 
         self._link_gen = 0
@@ -197,12 +200,18 @@ class RaceLabApp:
             state="idle" if opener is None else "connecting", transport=transport, device=device,
             version=None, bots_supported=None, bot_transport=None, bot_module=None, error=None,
             rtt_ms=None)
+        # the Pico drives the cars of a real CU only (the virtual CU has its own)
+        pico = self.cfg.connection.pico if transport in ("ble", "serial") else ""
+        self.link_info.update(pico="connecting" if pico else None,
+                              pico_device=self.cfg.connection.pico or None, pico_error=None)
         if opener is None:
             self.link = _IdleLink()
             return
         self.link = CULink(opener, transport=transport, device=device,
                            conn_cfg=self.cfg.connection, safety=self.cfg.safety,
-                           emit=lambda msg: self._from_link(msg, gen))
+                           emit=lambda msg: self._from_link(msg, gen),
+                           pico_opener=(lambda: open_port(pico)) if pico else None,
+                           pico_device=pico or None)
 
     def _make_opener(self):
         c = self.cfg.connection
@@ -242,26 +251,9 @@ class RaceLabApp:
             raise OpError("connection: none, ble, serial or sim")
         if transport == "serial" and not device:
             raise OpError("serial port required")
-        if self.engine.state not in IDLE_STATES:
-            raise OpError("end the session before changing CU")
-        if self.fw["state"] in ("running", "verifying"):
-            raise OpError("firmware update in progress")
-        self.bots.release_all()
-        old_link, old_sim = self.link, self.sim
-        self._link_gen += 1  # nothing from the old link is listened to anymore
-        await asyncio.get_running_loop().run_in_executor(None, old_link.stop)
-        if old_sim is not None:
-            old_sim.close()
-        self.sim = None
-        apply_connection_choice(self.cfg, {"transport": transport, "device": device, "stock": stock})
-        self._build_link()
-        if self.sim is not None:
-            self.sim.bot_images = self.firmware_lib.bot_line_digests()
-        self.bots.on_link(LinkState(self.link_info["state"], transport))
-        self._apply_mode()
-        self.link.trace = bool(self._raw_listeners)
-        self.link.start()
-        self._save()
+        self._check_relink("changing CU")
+        await self._relink(lambda: apply_connection_choice(
+            self.cfg, {"transport": transport, "device": device, "stock": stock}))
         label = {"none": "none", "ble": "Bluetooth AppConnect", "serial": f"serial {device}",
                  "sim": "virtual CU" + (" (stock firmware)" if stock else "")}[transport]
         self._log("info", f"CU selected: {label}")
@@ -270,6 +262,39 @@ class RaceLabApp:
         self._event("connection", {"transport": transport, "device": device or None})
         self._event("track", self.track_info())
         self._event("link", dict(self.link_info))
+
+    async def set_pico(self, device: str) -> None:
+        """Choose (or remove, "") the serial port of the Pico controller interface; the link restarts."""
+        self._check_relink("changing the Pico")
+        self.cfg.connection.pico = self.cfg.pico_choice = device
+        await self._relink(lambda: None)
+        self._log("info", f"Pico controller interface: {device}" if device else "Pico controller interface removed")
+        self._event("link", dict(self.link_info))
+
+    def _check_relink(self, what: str) -> None:
+        if self.engine.state not in IDLE_STATES:
+            raise OpError(f"end the session before {what}")
+        if self.fw["state"] in ("running", "verifying"):
+            raise OpError("firmware update in progress")
+
+    async def _relink(self, apply: Callable[[], None]) -> None:
+        """Bots stopped and handed back on the old link, `apply` the new settings, new link."""
+        self.bots.release_all()
+        old_link, old_sim = self.link, self.sim
+        self._link_gen += 1  # nothing from the old link is listened to anymore
+        await asyncio.get_running_loop().run_in_executor(None, old_link.stop)
+        if old_sim is not None:
+            old_sim.close()
+        self.sim = None
+        apply()
+        self._build_link()
+        if self.sim is not None:
+            self.sim.bot_images = self.firmware_lib.bot_line_digests()
+        self.bots.on_link(LinkState(self.link_info["state"], self.link_info["transport"]))
+        self._apply_mode()
+        self.link.trace = bool(self._raw_listeners)
+        self.link.start()
+        self._save()
 
     # ------------------------------------------------------------ lifecycle
 
@@ -354,6 +379,16 @@ class RaceLabApp:
             if msg.state != prev:
                 self._link_log(msg)
             self._event("link", dict(self.link_info))
+        elif isinstance(msg, PicoState):
+            was = self.link_info["pico"]
+            self.link_info.update(pico=msg.state, pico_error=msg.error)
+            if msg.state == "lost":
+                self._log("warn", f"Pico link lost: {msg.error} — bots held at 0, reconnecting…")
+            elif msg.state == "connected":
+                self._log("info", f"Pico connected ({msg.device})")
+                if was == "lost":
+                    self.bots.outage()  # docs/bot-protocol.md §1: throttle 0 before resuming
+            self._event("link", dict(self.link_info))
         elif isinstance(msg, LinkStats):
             self.link_info.update(dataclasses.asdict(msg))
         elif isinstance(msg, BotSent):
@@ -367,7 +402,8 @@ class RaceLabApp:
     def _link_log(self, msg: LinkState) -> None:
         if msg.state == "connected":
             how = {"C": "bots ready (the CU as it is, no firmware update needed)",
-                   "B": "bots ready (bot firmware module)"}.get(
+                   "B": "bots ready (bot firmware module)",
+                   "P": "bots through the Pico controller interface"}.get(
                 msg.bot_transport, "bots unavailable on this CU")
             self._log("info", f"CU connected ({self.link_info['transport']}, v{msg.version}) — {how}")
             if self.preferred_mode == "advanced" and msg.bots_supported is False:
@@ -1238,6 +1274,20 @@ class RaceLabApp:
         timeout = min(15.0, max(2.0, float(args.get("timeout", 5.0))))
         return await asyncio.get_running_loop().run_in_executor(None, scan_devices, timeout)
 
+    async def _op_pico_scan(self, args, client):
+        try:
+            ports = await asyncio.get_running_loop().run_in_executor(None, list_ports)
+        except Exception as e:  # pyserial missing or system error
+            raise OpError(f"serial ports: {e}") from None
+        return {"ports": ports, "current": self.cfg.connection.pico or None}
+
+    async def _op_pico_set(self, args, client):
+        device = args.get("device") or ""
+        if not isinstance(device, str) or len(device) > 200:
+            raise OpError("device: a serial port path is expected")
+        await self.set_pico(device)
+        return dict(self.link_info)
+
     def _op_quit(self, args, client):
         if self.request_quit is None:
             raise OpError("quitting from the interface is unavailable")
@@ -1294,6 +1344,8 @@ class RaceLabApp:
         "track.clear": _op_track_clear,
         "cu.connect": _op_cu_connect,
         "cu.scan": _op_cu_scan,
+        "pico.scan": _op_pico_scan,
+        "pico.set": _op_pico_set,
         "app.quit": _op_quit,
         "firmware.images": _op_fw_images,
         "firmware.status": _op_fw_status,

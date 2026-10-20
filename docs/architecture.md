@@ -44,8 +44,11 @@ The UI calls them **Normal** and **With bots**.
 | Agent API (RL) | read-only | read + drive |
 | Raw console | no | yes (letters G/E/F/C/B are refused; the bots have their own commands) |
 
-The link picks the transport (`[connection] bot_transport`, default `auto`): `C` when
-the CU's version is `?338` or `?339`, otherwise `B` if the module answers, otherwise none. It
+The link picks the transport (`[connection] bot_transport`, default `auto`): `P` when a
+Pico controller interface is set (`[connection] pico`, any real CU), else `C` when
+the CU's version is `?338` or `?339`, otherwise `B` if the module answers, otherwise none.
+`P` sends the same `C` frame to the Pico's serial port through its own writer thread
+(`cu/pico.py`), so a stalled Bluetooth port never holds the polls or the E-STOP. It
 falls back the same way if the CU rejects `C`. Both feed the same per-slot model
 (`set_bot` / lane / release), so nothing above the link knows which one is used.
 
