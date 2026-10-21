@@ -7,15 +7,16 @@ socket, the line a WIRELESS+ receiver uses. The CU sees controllers: start light
 starts and fuel apply as usual, and no CU firmware is involved. This is the bot path for CUs
 without `C` or `B` (hardware 8, STM32). See [`P` in docs/bot-protocol.md](../../docs/bot-protocol.md#p--the-pico-controller-interface).
 
-> **Status:** the protocol is validated against the stock V339 firmware (hardware 5) in the
-> emulator and in a model of its interrupt routines, and matches the published measurements
-> of the socket. It has not been run on a hardware-8 CU yet.
+> **Status:** works on a hardware-8 CU (v8339): RaceLab drives a car through the Pico. The
+> protocol was first validated against the stock V339 firmware (hardware 5) in the emulator
+> and in a model of its interrupt routines.
 
 ## Parts
 
 - Raspberry Pi Pico (RP2040) with MicroPython
-- HC-05 Bluetooth serial module (classic Bluetooth SPP, 9600 baud)
-- one NPN transistor (2N3904, BC547, BC337…), resistors 1 kΩ and 220 Ω
+- HC-05 Bluetooth serial module (classic Bluetooth SPP); its UART rate does not matter: the Pico
+  tries 9600, 115200, 38400 and 57600 until the frames read clean
+- one NPN transistor (2N3904, BC547, BC337…) and a 560 Ω–1 kΩ base resistor
 - a 6-contact controller plug or a sacrificed controller extension cable
 
 ## Wiring
@@ -28,16 +29,18 @@ HC-05                               Pico                        CU controller so
   RXD ----------------------------- GP0 (pin 1, UART0 TX)
                                     GP15 (pin 20) --[1 kΩ]-- B  NPN
                                                              E -- GND (pin 18) ---- contact 2 (GND)
-                                                             C --[220 Ω]---------- contact 1 (data to the CU)
+                                                             C ------------------- contact 1 (data to the CU)
 ```
 
-- **Levels.** The HC-05's logic is 3.3 V: wired straight to the Pico. Contact 1 is pulled up
-  inside the CU (~3.6 V measured on a hardware-5 CU, possibly 5 V); the RP2040 is not 5 V
-  tolerant, so the NPN pulls the line low and never drives it high (`main.py` inverts:
-  GP15 high = line low). Check the transistor's pinout with a multimeter (diode mode: base to
-  each other leg ≈ 0.65 V).
-- **No transistor** (`DIRECT = True` in `main.py`): GP15 → 1 kΩ → contact 1, driven open-drain.
-  Only if contact 1 idles at 3.3 V or less, or with a Pico 2 (RP2350, 5 V tolerant GPIO).
+- **Levels.** The HC-05's logic is 3.3 V: wired straight to the Pico. Inside the CU, contact 1
+  has a 1 kΩ pull-up to contact 3 (~4.4 V) and 100 nF to ground (HPI's CU schematic); the
+  RP2040 is not 5 V tolerant, so the NPN pulls the line low and never drives it high
+  (`main.py` inverts: GP15 high = line low). No collector resistor: against the 1 kΩ pull-up
+  even 220 Ω would leave the low level near the CU's 1 V threshold. Check the transistor's
+  pinout with a multimeter (diode mode: base to each other leg ≈ 0.65 V).
+- **No transistor** (`DIRECT = True` in `main.py`): GP15 → contact 1, driven open-drain. Only if
+  contact 1 idles at 3.3 V or less, or with a Pico 2 (RP2350, 5 V tolerant GPIO); not on a CU
+  built like the HPI schematic (4.4 V pull-up).
 - **Idle or crashed Pico:** the line stays released (the PIO always stalls on the released
   level, GP15 has a pull-down at boot); the CU falls back to its sockets.
 - **Power** the Pico over USB. Common ground with the CU is required. Never connect contact 3
@@ -45,12 +48,13 @@ HC-05                               Pico                        CU controller so
 
 ## The socket (6 contacts)
 
-From the HPI's measurements and slotbaer's protocol pages (sources below), consistent with
-the V339 firmware:
+From the HPI's measurements and CU schematic and slotbaer's protocol pages (sources below),
+consistent with the V339 firmware; checked on a hardware-8 CU (contact 2 rings to the rails'
+ground):
 
 | Contact | Role | Here |
 |---|---|---|
-| 1 | data, receiver → CU (pull-up; low pulses) | **NPN collector, through 220 Ω** |
+| 1 | data, receiver → CU (1 kΩ pull-up to contact 3, 100 nF; low pulses) | **NPN collector** |
 | 2 | ground | **Pico GND** |
 | 3 | controller supply (~4.4 V) | not connected |
 | 4 | lane button (pull-up) | — |
@@ -81,8 +85,16 @@ latest word for one rail cycle (75.1 ms); the Pico sends the 6 slots in turn, on
    `mpremote cp tools/pico_controllers/main.py :main.py` (or Thonny: open `main.py`, save to the Pico).
    It starts by itself at power-up.
 3. **Pair the HC-05** in the computer's Bluetooth settings (PIN `1234`, else `0000`). On macOS
-   it then shows as `/dev/cu.HC-05…`. Do not press the module's button: held at power-up it
-   enters its AT configuration mode (38400 baud) instead of the data mode.
+   it then shows as `/dev/cu.<module name>`. Do not press the module's button: held at power-up
+   it enters its AT configuration mode (38400 baud) instead of the data mode.
+   - macOS may show no *Connect* button for it (an SPP-only device): pair from Terminal with
+     `brew install blueutil`, then `blueutil --pair <address> 1234` (`blueutil --inquiry 10`
+     lists the address).
+   - LED blinking fast while RaceLab has the port open = no Bluetooth connection. A module
+     whose `AT+STATE?` answers `PAIRABLE` although the computer lists it lost the pairing:
+     forget it on the computer (`blueutil --unpair <address>`) and pair again.
+   - In AT mode (button held at power-up), the Pico can talk to the module: `AT+NAME=<name>`
+     renames it, `AT+UART?` gives its rate (any rate works, `main.py` finds it).
 4. **RaceLab:** connect the CU as usual (System → Connection), then under *Pico controller
    interface*: *Search ports…* → *Use* on the HC-05's port. The chip turns green and the
    module's LED blinks slowly once connected. Bots show *Ready · Pico*: turn on **With bots**
@@ -126,5 +138,6 @@ while True:  # slot 0 at throttle 8, the others not driven; resend well within 7
 - `HALF_US` and `FRAME` in `main.py` are the timing knobs.
 
 Sources: [HPI — Handregler der Carrera-Bahn](https://osm.hpi.de/carrera/handregler) (socket,
-sync signal, receiver answer), [slotbaer — D132 & D124 Infrarot-Regler-Protokoll](http://slotbaer.de/carrera-digital-124-132/13-d132-d124-infrarot-regler-protokoll.html)
+sync signal, receiver answer), [HPI — Control Unit schematic](https://osm.hpi.de/carrera/schaltbilder/control_unit.pdf)
+(sheet 5, the controller sockets), [slotbaer — D132 & D124 Infrarot-Regler-Protokoll](http://slotbaer.de/carrera-digital-124-132/13-d132-d124-infrarot-regler-protokoll.html)
 (controller word).

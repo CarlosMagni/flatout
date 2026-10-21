@@ -27,7 +27,11 @@ FRAME = 24         # half-bits per word: start 5 + data 16 + idle 3 (the CU clos
 DATA_PIN = 15      # GPIO -> 1k -> NPN base; collector on the CU's pulse line (pulled up by the CU)
 DIRECT = False     # True: no transistor, GPIO -> 1k -> the line, driven open-drain. Only if the line idles at
                    # 3.3 V or less, or with a Pico 2 (RP2350, 5 V tolerant GPIO); never a Pico 1 on a 5 V line
-UART_ID, TX_PIN, RX_PIN, BAUD = 0, 0, 1, 9600  # HC-05/06 default; module TX -> GP1
+UART_ID, TX_PIN, RX_PIN = 0, 0, 1  # module TX -> GP1
+# the module's UART rate is whatever its AT setup says: bytes arriving with no valid frame for
+# BAUD_SWITCH_MS = wrong rate, try the next one (HC-05 default first)
+BAUDS = (9600, 115200, 38400, 57600)
+BAUD_SWITCH_MS = 2000
 TIMEOUT_MS = 750
 
 
@@ -82,8 +86,9 @@ def main():
         Pin(DATA_PIN, Pin.IN, None)  # no pad pull-down: the CU's pull-up alone must make the high level
     sm = rp2.StateMachine(0, _direct if DIRECT else _npn, freq=1_000_000 // HALF_US, out_base=Pin(DATA_PIN))
     sm.active(1)
-    uart = UART(UART_ID, BAUD, tx=Pin(TX_PIN), rx=Pin(RX_PIN), rxbuf=512)
-    slots, buf, last, nxt = [None] * 6, b"", ticks_ms(), 0
+    rate = 0
+    uart = UART(UART_ID, BAUDS[rate], tx=Pin(TX_PIN), rx=Pin(RX_PIN), rxbuf=512)
+    slots, buf, last, nxt, good = [None] * 6, b"", ticks_ms(), 0, ticks_ms()
     while True:
         data = uart.read()
         if data:
@@ -93,6 +98,11 @@ def main():
                 s = parse(p)
                 if s:
                     slots, last = s, ticks_ms()
+                    good = last
+            if ticks_diff(ticks_ms(), good) > BAUD_SWITCH_MS:  # bytes, nothing readable: wrong rate
+                rate = (rate + 1) % len(BAUDS)
+                uart = UART(UART_ID, BAUDS[rate], tx=Pin(TX_PIN), rx=Pin(RX_PIN), rxbuf=512)
+                buf, good = b"", ticks_ms()
         if ticks_diff(ticks_ms(), last) > TIMEOUT_MS:
             slots = [None] * 6
         if sm.tx_fifo() == 0:  # one word queued at most: a new frame reaches the line within ~12 ms

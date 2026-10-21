@@ -13,7 +13,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-BAUD = 9600  # HC-05 default in data mode; tools/pico_controllers/main.py uses the same
+BAUD = 9600  # a Bluetooth SPP port ignores it; the Pico finds the module's own UART rate itself
 RETRY_S = 2.0  # between two attempts to open the port
 WRITE_TIMEOUT_S = 0.5
 # serial ports that are never a Pico (macOS system ports)
