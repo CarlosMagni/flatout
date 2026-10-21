@@ -12,7 +12,7 @@ Docker), read back on the rails; skipped when the emulator is not available.
 import sys
 from pathlib import Path
 
-from main import DIRECT, FRAME, HALF_US, levels, parse
+from main import DIRECT, FRAME, SYM_US, levels, parse
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,7 +29,7 @@ def edges(words):
             if lv != prev:
                 out.append((t, lv))
                 prev = lv
-            t += HALF_US
+            t += SYM_US
     return out
 
 
@@ -80,7 +80,7 @@ def check_model():
     assert parse(b"C0X80000000008") is None          # bad throttle char
 
     words = [(a, g, lane) for g in range(16) for lane in (0, 1) for a in range(6)]
-    frame_us = FRAME * HALF_US
+    frame_us = FRAME * SYM_US
     stream = edges(words)
     got = cu_decode(stream)
     assert [w for _, w in got] == words, got[:8]
@@ -92,7 +92,12 @@ def check_model():
         for a in range(6):
             ts = [0] + [t for t, w in got if w[0] == a] + [len(words) * frame_us]
             assert max(b - a for a, b in zip(ts, ts[1:])) < CYCLE, (start, a)
-    print("model: 192 words decoded; CU pause at every 50 us offset: no wrong word, no slot misses a cycle")
+    # the CU's 100 nF on the line (1 kOhm pull-up) delays the rising edges: words still decode
+    for slow_rise in (40, 80, 100):           # past ~108 us the bits themselves fall out of the CU's window
+        late = [(t + slow_rise if lv else t, lv) for t, lv in stream]
+        assert [w for _, w in cu_decode(late)] == words, slow_rise
+    print("model: 192 words decoded; CU pause at every 50 us offset: no wrong word, no slot misses a cycle;"
+          " rising edges up to 100 us late still decode")
 
 
 def check_emu():
@@ -116,7 +121,7 @@ def check_emu():
                     if lv != prev:
                         emu.proc.stdin.write("pin D2 %d\n" % lv)
                         prev = lv
-                    emu.run(HALF_US / 1000)
+                    emu.run(SYM_US / 1000)
         for a, g, lane in want:
             seen = {(w["thr"], w["sw"]) for w in emu.slot_words(a, since=sent + 80)}
             assert seen == {(g, 1 - lane)}, (a, seen)
