@@ -25,6 +25,7 @@ from .bots.profiles import PROFILE_LABELS, PROFILES
 from .config import Config, apply_connection_choice, save_overrides
 from .cu.firmware import FirmwareLibrary, ImageError, build_images, can_build, missing_images
 from .cu.link import CULink
+from .cu import pico
 from .cu.pico import list_ports, open_port
 from .events import (
     BUTTON_BRAKE,
@@ -74,7 +75,7 @@ def live_walk_steps(level: int, current: int) -> int:
 # during a flash, only these commands go through (reads + flash control)
 FIRMWARE_SAFE_OPS = frozenset({
     "state", "meta", "log", "laps", "results", "sessions.list", "sessions.get",
-    "firmware.images", "firmware.status", "firmware.abort", "firmware.build_status", "cu.scan", "pico.scan",
+    "firmware.images", "firmware.status", "firmware.abort", "firmware.build_status", "cu.scan", "pico.scan", "pico.bt_scan",
     "track.set", "track.positions", "track.clear", "connector.set", "connector.clear",
 })
 FIRMWARE_CONFIRM = "FLASH"
@@ -86,7 +87,7 @@ HW_BENCH_MAX = 300
 HW_REPORT_MAX = 200_000  # bytes
 # These ops wait (up to a few seconds): the WebSocket answers them in the background so that
 # STOP, sent by the same client meanwhile, is never queued behind them.
-LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback"})
+LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback", "pico.bt_scan", "pico.pair"})
 CONNECTOR_LIMITS = {"name": 40, "ui_url": 300, "status": 80}
 VERIFY_TIMEOUT_S = 45.0  # the CU must answer after its reboot
 
@@ -1279,7 +1280,27 @@ class RaceLabApp:
             ports = await asyncio.get_running_loop().run_in_executor(None, list_ports)
         except Exception as e:  # pyserial missing or system error
             raise OpError(f"serial ports: {e}") from None
-        return {"ports": ports, "current": self.cfg.connection.pico or None}
+        return {"ports": ports, "current": self.cfg.connection.pico or None, "pairing": pico.blueutil() is not None}
+
+    async def _op_pico_bt_scan(self, args, client):
+        try:
+            devices = await asyncio.get_running_loop().run_in_executor(None, pico.bluetooth_devices)
+        except Exception as e:  # blueutil missing, Bluetooth off or not allowed
+            raise OpError(f"Bluetooth search: {e}") from None
+        return {"devices": devices}
+
+    async def _op_pico_pair(self, args, client):
+        """Pair a classic Bluetooth serial module (HC-05) from RaceLab, then use its port."""
+        address, name = args.get("address"), args.get("name") or ""
+        if not isinstance(address, str) or not 11 <= len(address) <= 17 or not isinstance(name, str):
+            raise OpError("address: a Bluetooth address is expected")
+        self._check_relink("changing the Pico")
+        try:
+            device = await asyncio.get_running_loop().run_in_executor(None, pico.pair, address, name[:60])
+        except Exception as e:
+            raise OpError(f"pairing {name or address}: {e}") from None
+        await self.set_pico(device)  # logs the new port
+        return dict(self.link_info)
 
     async def _op_pico_set(self, args, client):
         device = args.get("device") or ""
@@ -1346,6 +1367,8 @@ class RaceLabApp:
         "cu.scan": _op_cu_scan,
         "pico.scan": _op_pico_scan,
         "pico.set": _op_pico_set,
+        "pico.bt_scan": _op_pico_bt_scan,
+        "pico.pair": _op_pico_pair,
         "app.quit": _op_quit,
         "firmware.images": _op_fw_images,
         "firmware.status": _op_fw_status,

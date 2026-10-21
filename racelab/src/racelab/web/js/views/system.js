@@ -193,16 +193,40 @@ export class SystemView {
     this.picoResults.replaceChildren(h("p.faint", { text: t("sys.pico.scanning") }));
     try {
       const res = await request("pico.scan", {});
+      const bt = h("div.cx-results");
       this.picoResults.replaceChildren(...(res.ports.length
         ? res.ports.map((p) => h("div.cx-device", {},
           h("div", {}, h("div", { text: p.label }), h("div.mono.faint", { text: p.device })),
           h("button.btn.primary.sm", { type: "button", onclick: () => this.setPico(p.device) }, t("sys.pico.use"))))
-        : [h("p.faint", { text: t("sys.pico.no_ports") })]));
+        : [h("p.faint", { text: t(res.pairing ? "sys.pico.no_ports_pairing" : "sys.pico.no_ports") })]), bt);
+      // modules in range not paired yet: RaceLab pairs them itself (macOS, blueutil)
+      if (res.pairing) {
+        bt.replaceChildren(h("p.faint", { text: t("sys.pico.bt_scanning") }));
+        const found = await request("pico.bt_scan", {}, 45000);
+        bt.replaceChildren(...(found.devices.length
+          ? found.devices.map((d) => h("div.cx-device", {},
+            h("div", {}, h("div", { text: d.name }), h("div.mono.faint", { text: d.address })),
+            h("button.btn.primary.sm", { type: "button", onclick: (ev) => this.pairPico(d, ev.currentTarget) }, t("sys.pico.pair"))))
+          : [h("p.faint", { text: t("sys.pico.bt_none") })]));
+      }
     } catch (e) {
-      this.picoResults.replaceChildren();
       toast(e.message, "error", 5000);
     } finally {
       this.picoScan.disabled = false;
+    }
+  }
+
+  async pairPico(device, button) {
+    button.disabled = true;
+    setText(button, t("sys.pico.pairing"));
+    try {
+      await request("pico.pair", { address: device.address, name: device.name }, 90000);
+      this.picoResults.replaceChildren();
+      toggle(this.picoResults, "hidden", true);
+    } catch (e) {
+      toast(e.message, "error", 6000);
+      button.disabled = false;
+      setText(button, t("sys.pico.pair"));
     }
   }
 

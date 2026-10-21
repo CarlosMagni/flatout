@@ -210,3 +210,32 @@ def test_app_drives_a_real_cu_through_the_pico(tmp_path, monkeypatch):
         assert port.slots() == [None] * 6                                # every slot handed back on exit
 
     run(main())
+
+
+def test_bluetooth_pairing_through_blueutil(monkeypatch):
+    """Search lists only unpaired modules; pairing drops a stale pairing first, then waits for the port."""
+    import json
+    import subprocess
+
+    calls, ports = [], [{"device": "/dev/cu.debug-x", "label": "x"}]
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[1:])
+        if "--inquiry" in cmd:
+            out = json.dumps([{"address": "00-22-09-01-82-7a", "name": "racelab-wireless", "paired": False},
+                              {"address": "aa-bb-cc-dd-ee-ff", "name": "iPhone", "paired": True}])
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        if cmd[1] == "--unpair":
+            return subprocess.CompletedProcess(cmd, 1, "", "not paired")
+        ports.append({"device": "/dev/cu.racelab-wireless", "label": "racelab-wireless"})  # --pair
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(pico_mod, "blueutil", lambda: "/fake/blueutil")
+    monkeypatch.setattr(pico_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(pico_mod, "list_ports", lambda: list(ports))
+    assert pico_mod.bluetooth_devices(1) == [{"address": "00-22-09-01-82-7a", "name": "racelab-wireless"}]
+    assert pico_mod.pair("00-22-09-01-82-7a", "racelab-wireless") == "/dev/cu.racelab-wireless"
+    assert calls[1:] == [["--unpair", "00-22-09-01-82-7a"], ["--pair", "00-22-09-01-82-7a", "1234"]]
+    monkeypatch.setattr(pico_mod, "blueutil", lambda: None)            # not macOS / not installed
+    with pytest.raises(RuntimeError, match="blueutil"):
+        pico_mod.bluetooth_devices(1)

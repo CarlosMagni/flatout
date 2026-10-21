@@ -83,7 +83,9 @@ is `hello.client`),
 | `console.trace` | `polls` (bool) | include the `?` polls in the raw-frame subscription |
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |
 | `cu.connect` | `transport: none\|ble\|serial\|sim`, `device?`, `stock?` | switch CU (outside a session): bots are stopped and handed back on the old one first; the choice is remembered |
-| `pico.scan` | — | serial ports a Pico controller interface could be on, Bluetooth ones included: `{ports: [{device, label}], current}` |
+| `pico.scan` | — | serial ports a Pico controller interface could be on, Bluetooth ones included: `{ports: [{device, label}], current, pairing}` (`pairing`: RaceLab can pair Bluetooth modules itself, macOS with blueutil) |
+| `pico.bt_scan` | — | classic Bluetooth modules in range not paired yet (~10 s): `{devices: [{address, name}]}` |
+| `pico.pair` | `address`, `name?` | pairs the module (PIN 1234, a stale pairing is dropped first), then uses its serial port as `pico.set` does |
 | `pico.set` | `device` (serial port, `""` = remove) | choose the Pico controller interface ([bot-protocol.md](bot-protocol.md#p--the-pico-controller-interface)), outside a session: the link restarts, the bots go through it on a real CU; the choice is remembered |
 | `app.quit` | | stop RaceLab: bots cut and handed back (refused during a firmware update) |
 | `link.bench` | `n?` (1..300, default 100) | hardware test: times `n` round trips of the CU's poll (nothing that can move a car); the `C` acknowledgement time comes from the frames the link sends, plus an idle "every slot on its controller" frame when no bot is active (never a frame that changes a bot). Returns `{n, answered, lost, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms, histogram: [{from_ms, to_ms, count}], c_ack: {n, min_ms, median_ms, p95_ms, max_ms, mean_ms, jitter_ms} \| null, duration_ms, timed_out, transport, bot_transport}` (`timed_out`: the wait ended before `n` answers, the partial data is returned). p95 = nearest rank; jitter = mean absolute difference between consecutive samples |

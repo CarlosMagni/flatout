@@ -9,7 +9,13 @@ The serial port lives in its own thread: a Bluetooth SPP port can block on open 
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
+import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +24,9 @@ RETRY_S = 2.0  # between two attempts to open the port
 WRITE_TIMEOUT_S = 0.5
 # serial ports that are never a Pico (macOS system ports)
 NOT_A_PICO = ("Bluetooth-Incoming-Port", "debug-console", "wlan-debug")
+PIN = "1234"  # HC-05 default
+INQUIRY_S = 8
+PORT_WAIT_S = 10.0  # after pairing, until macOS creates /dev/cu.<name>
 
 
 def open_port(device: str) -> Any:
@@ -32,6 +41,55 @@ def list_ports() -> list[dict[str, str]]:
 
     return [{"device": p.device, "label": p.description if p.description not in (None, "n/a") else p.device}
             for p in comports() if not any(s in p.device for s in NOT_A_PICO)]
+
+
+# ------------------------------------------------------------ pairing (macOS)
+# A classic Bluetooth serial module (HC-05) only gets a serial port once paired, and macOS shows
+# no Connect button for it: RaceLab pairs it with blueutil (Homebrew), so nobody needs a shell.
+# Needs the Bluetooth permission of whatever launched RaceLab (Terminal, RaceLab.app).
+
+def blueutil() -> str | None:
+    """Path of blueutil, None when pairing from RaceLab is not possible (not macOS, not installed)."""
+    if sys.platform != "darwin":
+        return None
+    return shutil.which("blueutil") or next(
+        (p for p in ("/opt/homebrew/bin/blueutil", "/usr/local/bin/blueutil") if os.path.exists(p)), None)
+
+
+def _blueutil(*args: str, timeout: float) -> str:
+    tool = blueutil()
+    if tool is None:
+        raise RuntimeError("pairing from RaceLab needs blueutil on macOS (brew install blueutil)")
+    out = subprocess.run([tool, *args], capture_output=True, text=True, timeout=timeout)
+    if out.returncode:
+        raise RuntimeError((out.stderr or out.stdout).strip() or f"blueutil {args[0]} failed")
+    return out.stdout
+
+
+def bluetooth_devices(seconds: int = INQUIRY_S) -> list[dict[str, str]]:
+    """Classic Bluetooth devices in range that are not paired yet (a paired module already has a port)."""
+    found = json.loads(_blueutil("--format", "json", "--inquiry", str(seconds), timeout=seconds + 20) or "[]")
+    return [{"address": d["address"], "name": d.get("name") or d["address"]} for d in found if not d.get("paired")]
+
+
+def pair(address: str, name: str = "") -> str:
+    """Pair a serial module (PIN 1234) and return the serial port macOS creates for it.
+
+    A stale pairing (the module forgot it, macOS did not) is dropped first: it fails every connection."""
+    before = {p["device"] for p in list_ports()}
+    try:
+        _blueutil("--unpair", address, timeout=15)
+    except RuntimeError:
+        pass  # was not paired
+    _blueutil("--pair", address, PIN, timeout=40)
+    key = name.replace(" ", "-").lower()
+    end = time.monotonic() + PORT_WAIT_S
+    while time.monotonic() < end:
+        for p in list_ports():
+            if p["device"] not in before or (key and key in p["device"].lower()):
+                return p["device"]
+        time.sleep(0.5)
+    raise RuntimeError("paired, but no serial port appeared for it (is it a serial module?)")
 
 
 class PicoWriter:

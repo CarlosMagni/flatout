@@ -84,19 +84,20 @@ latest word for one rail cycle (75.1 ms); the Pico sends the 6 slots in turn, on
 2. **Copy the program:** `pip install mpremote`, then
    `mpremote cp tools/pico_controllers/main.py :main.py` (or Thonny: open `main.py`, save to the Pico).
    It starts by itself at power-up.
-3. **Pair the HC-05** in the computer's Bluetooth settings (PIN `1234`, else `0000`). On macOS
-   it then shows as `/dev/cu.<module name>`. Do not press the module's button: held at power-up
-   it enters its AT configuration mode (38400 baud) instead of the data mode.
-   - macOS may show no *Connect* button for it (an SPP-only device): pair from Terminal with
-     `brew install blueutil`, then `blueutil --pair <address> 1234` (`blueutil --inquiry 10`
-     lists the address).
+3. **The HC-05** (do not press its button: held at power-up it enters its AT configuration
+   mode, 38400 baud, instead of the data mode): RaceLab pairs it itself on macOS, step 4,
+   through [blueutil](https://github.com/toy/blueutil) (`brew install blueutil` once; macOS
+   shows no *Connect* button for such a module). Elsewhere, pair it in the system's Bluetooth
+   settings (PIN `1234`, else `0000`).
    - LED blinking fast while RaceLab has the port open = no Bluetooth connection. A module
      whose `AT+STATE?` answers `PAIRABLE` although the computer lists it lost the pairing:
-     forget it on the computer (`blueutil --unpair <address>`) and pair again.
+     pair it again from RaceLab (the old pairing is dropped first).
    - In AT mode (button held at power-up), the Pico can talk to the module: `AT+NAME=<name>`
      renames it, `AT+UART?` gives its rate (any rate works, `main.py` finds it).
-4. **RaceLab:** connect the CU as usual (System → Connection), then under *Pico controller
-   interface*: *Search ports…* → *Use* on the HC-05's port. The chip turns green and the
+4. **RaceLab** (launched from Terminal or RaceLab.app, which hold the Bluetooth permission):
+   connect the CU as usual (System → Connection), then under *Pico controller interface*:
+   *Search ports…* → *Use* on the module's port, or, for a module not paired yet, *Pair and
+   use* under the Bluetooth modules in range. The chip turns green and the
    module's LED blinks slowly once connected. Bots show *Ready · Pico*: turn on **With bots**
    and use a slot's fader.
 5. First tests with the cars off the track or wheels in the air, a hand on the track's power.
