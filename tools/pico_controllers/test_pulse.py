@@ -93,11 +93,11 @@ def check_model():
             ts = [0] + [t for t, w in got if w[0] == a] + [len(words) * frame_us]
             assert max(b - a for a, b in zip(ts, ts[1:])) < CYCLE, (start, a)
     # the CU's 100 nF on the line (1 kOhm pull-up) delays the rising edges: words still decode
-    for slow_rise in (40, 80, 100):           # past ~108 us the bits themselves fall out of the CU's window
+    for slow_rise in (40, 80):
         late = [(t + slow_rise if lv else t, lv) for t, lv in stream]
         assert [w for _, w in cu_decode(late)] == words, slow_rise
     print("model: 192 words decoded; CU pause at every 50 us offset: no wrong word, no slot misses a cycle;"
-          " rising edges up to 100 us late still decode")
+          " rising edges up to 80 us late still decode")
 
 
 def check_emu():

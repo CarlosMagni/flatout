@@ -10,7 +10,7 @@
 #
 # CU side: the controller pulse line the CU decodes into its per-address table (firmware V339:
 # INT0/PD2 or INT2/PB2, ISRs at 0x091C/0x09CC, decoder 0x0A8E). One word per controller:
-# start (low 375 us, then high), then 8 Manchester bits, 500 us each, the level after the
+# start (low 500 us, then high), then 8 Manchester bits, 500 us each, the level after the
 # mid-bit edge is the bit: a1 a0 G3 G2 G1 G0 SW a2 (address a, throttle G, SW 1 = lane change).
 # The CU uses each slot's latest word once per rail cycle (75.1 ms), then forgets it.
 try:
@@ -21,9 +21,11 @@ except ImportError:  # CPython: test_pulse.py only uses the pure functions
     rp2 = None
 
 SYM_US = 125       # one PIO symbol (a quarter bit); the V339 accepts a bit edge 392-776 us after the previous one
-FIRST_US = 1125    # rise -> first mid-bit edge: middle of the 912-1256 us the V339 accepts. The CU's 100 nF on
-                   # the line slows the rising edges (~70 us); 1000 left that edge ~25 us of margin
-FRAME = 48         # symbols per word: start 3 + 7 + data 32 + idle 6 (the CU closes a word 776 us after its last
+START_US = 500     # start: line low that long
+FIRST_US = 1000    # rise -> first mid-bit edge, as real receivers send it (slotbaer: high 750 us, or 1000 us
+                   # when the first bit's first half is high). Do not move it for margin: 1125 us, mid-window
+                   # for the hardware-5 decoder, made a hardware-8 CU misread the words half a bit late
+FRAME = 48         # symbols per word: start 4 + 6 + data 32 + idle 6 (the CU closes a word 776 us after its last
                    # edge). 6 words = 36 ms: every slot lands twice per 75.1 ms rail cycle, and the CU's 2.1 ms
                    # pause per cycle can only eat one of them. Sent as two 24-bit FIFO entries.
 DATA_PIN = 15      # GPIO -> 1k -> NPN base; collector on the CU's pulse line (pulled up by the CU)
@@ -57,7 +59,7 @@ def parse(frame):
 def levels(addr, thr, lane):
     """Line levels (1 = released/high) of one controller word, one per SYM_US."""
     bits = (addr >> 1 & 1, addr & 1, thr >> 3 & 1, thr >> 2 & 1, thr >> 1 & 1, thr & 1, lane, addr >> 2 & 1)
-    out = [0] * 3 + [1] * (FIRST_US // SYM_US - 2)  # start: low, rise, high until the first bit's cell
+    out = [0] * (START_US // SYM_US) + [1] * (FIRST_US // SYM_US - 2)  # start, rise, high until the first cell
     for b in bits:
         out += [1 - b, 1 - b, b, b]
     return out + [1] * (FRAME - len(out))
