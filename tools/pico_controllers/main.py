@@ -19,6 +19,8 @@
 # through a divider to GP26) and sends each driven slot once per cycle, in that address's time slot.
 # It never talks during the burst (the CU is deaf then) nor over another receiver's slots, so a
 # real receiver on the other socket keeps its controllers. No burst seen: the Pico stays silent.
+from array import array
+
 try:
     import gc
     import rp2
@@ -60,7 +62,22 @@ WORD_US = 7510
 LEAD_US = 13000
 SLOT_POS = (3, 5, 7, 9, 4, 6)                     # rail position of addresses 0..5
 SLOT_US = tuple(p * WORD_US - LEAD_US for p in SLOT_POS)
-PRESENCE = True    # like a receiver, pull the line low 250 us right after the burst starts ("I am here")
+PRESENCE = False   # True: like a receiver, pull the line low 250 us right after the burst starts ("I am
+                   # here"). A hardware-8 CU beeps at it every cycle, as if a new controller had logged in
+# live tuning over Bluetooth, for finding a CU's timing: a line "#shift=<us>" moves every slot (kept
+# between the burst and the next one), "#presence=0|1" switches the presence pulse; both show in the status
+tune = {"shift": 0, "presence": PRESENCE, "repeat": 1}   # repeat=2: each slot also half a cycle away
+
+
+def tune_line(line):
+    """b'#shift=-3000' -> applied to `tune`; anything else is ignored."""
+    try:
+        key, value = line.strip().lstrip(b"#").split(b"=")
+        key = key.decode()
+        if key in tune:
+            tune[key] = int(value)
+    except ValueError:
+        pass
 
 
 def parse(frame):
@@ -97,9 +114,42 @@ def symbols(addr, thr, lane):
     return word
 
 
-def schedule(slots):
-    """This cycle's words: (us after the burst starts, address), each driven slot in its own slot."""
-    return sorted((SLOT_US[a], a) for a in range(6) if slots[a])
+HALF_US = 36700    # half a hardware-8 cycle (73.5 ms)
+
+
+# every word the Pico can send, computed once (at a slot's time there is only a lookup left), as
+# its two 24-bit FIFO halves: small ints in one flat array, no big-int objects on the heap
+WORDS = None
+
+
+def build_words():
+    words = array("I", bytes(4 * 2 * 6 * 16 * 2))
+    i = 0
+    for a in range(6):
+        for g in range(16):
+            for lane in (0, 1):
+                w = symbols(a, g, lane)
+                words[i], words[i + 1] = w >> 24, w & 0xFFFFFF
+                i += 2
+    return words
+
+
+def word_at(a, slot):
+    """Index in WORDS of the word for address `a` driven at slot = (throttle, lane)."""
+    return ((a * 16 + slot[0]) * 2 + (1 if slot[1] else 0)) * 2
+
+
+def schedule(slots, shift=0, repeat=1):
+    """This cycle's words: (us after the burst starts, address), each driven slot in its own slot
+    (repeat=2: again half a cycle away, still clear of the burst)."""
+    out = []
+    for a in range(6):
+        if slots[a]:
+            us = min(max(SLOT_US[a] + shift, 2500), 66000)
+            out.append((us, a))
+            if repeat == 2:
+                out.append((us + HALF_US if us + HALF_US <= 66000 else us - HALF_US, a))
+    return sorted(out)
 
 
 if rp2:  # one symbol per SM clock; empty FIFO = stall on the last (released) level
@@ -143,22 +193,45 @@ if rp2:  # one symbol per SM clock; empty FIFO = stall on the last (released) le
 
 
 def main():
+    global WORDS
+    gc.collect()
+    if SYNC:
+        _thread.start_new_thread(_sync_loop, ())  # first: its 4 kB stack needs an unfragmented heap
+    WORDS = build_words()
+    gc.collect()
     if DIRECT:
         Pin(DATA_PIN, Pin.IN, None)  # no pad pull-down: the CU's pull-up alone must make the high level
     sm = rp2.StateMachine(0, _direct if DIRECT else _npn, freq=1_000_000 // SYM_US, out_base=Pin(DATA_PIN))
     sm.active(1)
-    if SYNC:
-        _thread.start_new_thread(_sync_loop, ())
     rate = 0
     uart = UART(UART_ID, BAUDS[rate], tx=Pin(TX_PIN), rx=Pin(RX_PIN), rxbuf=512)
     slots, buf, last, nxt, good = [None] * 6, b"", ticks_ms(), 0, ticks_ms()
-    seen, todo, frames, words, report = 0, [], 0, 0, ticks_ms()
+    seen, todo, frames, words, late, report = 0, [], 0, 0, 0, ticks_ms()
     while True:
+        if todo and ticks_diff(todo[0][0], ticks_us()) < 2000:
+            # a word is due within 2 ms: wait for it here, nothing else may delay it
+            due, a = todo.pop(0)
+            v = slots[a]                          # the latest throttle, looked up before the wait
+            i = word_at(a, v) if v else 0
+            while ticks_diff(due, ticks_us()) > 0:
+                pass
+            if v and ticks_diff(ticks_ms(), last) <= TIMEOUT_MS:
+                if ticks_diff(ticks_us(), due) < 1000:   # late by more than 1 ms: skip, never spill over
+                    sm.put(WORDS[i], 8)           # put() left-aligns each 24-bit half
+                    sm.put(WORDS[i + 1], 8)
+                    words += 1
+                else:
+                    late += 1
+            continue
         data = uart.read()
         if data:
             parts = (buf + data).replace(b"\n", b"$").split(b"$")
             buf = parts.pop()[-64:]
             for p in parts:
+                if p.strip().startswith(b"#"):
+                    tune_line(p)
+                    good = ticks_ms()
+                    continue
                 s = parse(p)
                 if s:
                     slots, last = s, ticks_ms()
@@ -170,39 +243,40 @@ def main():
                 buf, good = b"", ticks_ms()
         if ticks_diff(ticks_ms(), last) > TIMEOUT_MS:
             slots = [None] * 6
+        due_report = ticks_diff(ticks_ms(), report) >= 1000
         if SYNC:
             count, start = _sync[0], _sync[1]
-            if count != seen:                     # a new burst: this cycle's words, in their slots
+            if count != seen:                     # a new burst: the slow work now, 9 ms before the first slot
                 seen = count
-                if PRESENCE and any(slots):
+                if tune["presence"] and any(slots):
                     sm.put(0b11 << 22, 8)         # 250 us low (2 symbols) during the burst: the CU only counts it
-                todo = [(ticks_add(start, us), a) for us, a in schedule(slots)]
-                gc.collect()                      # now, 9 ms before the first slot, never in the middle of one
-            if todo and ticks_diff(ticks_us(), todo[0][0]) >= 0:
-                due, a = todo.pop(0)
-                if slots[a] and ticks_diff(ticks_ms(), last) <= TIMEOUT_MS \
-                        and ticks_diff(ticks_us(), due) < 1000:   # late by more than 1 ms: skip, never spill over
-                    w = symbols(a, *slots[a])
-                    sm.put(w >> 24, 8)            # put() left-aligns each 24-bit half
-                    sm.put(w & 0xFFFFFF, 8)
-                    words += 1
-        elif sm.tx_fifo() == 0:  # nonstop: one word queued at most, a new frame reaches the line within ~12 ms
-            for k in range(6):
-                a = (nxt + k) % 6
-                if slots[a]:
-                    w = symbols(a, *slots[a])
-                    sm.put(w >> 24, 8)
-                    sm.put(w & 0xFFFFFF, 8)
-                    words += 1
-                    nxt = a + 1
-                    break
-        if ticks_diff(ticks_ms(), report) >= 1000:
-            report = ticks_ms()
-            uart.write(status(frames, words, BAUDS[rate], slots))
-            frames = words = 0
+                todo = [(ticks_add(start, us), a) for us, a in schedule(slots, tune["shift"], tune["repeat"])]
+                if due_report:
+                    report = ticks_ms()
+                    uart.write(status(frames, words, late, BAUDS[rate], slots))
+                    frames = words = late = 0
+                gc.collect()
+            elif due_report and ticks_diff(ticks_us(), start) > SYNC_LOST_MS * 1000:
+                report = ticks_ms()               # no burst: still report, there is nothing to send anyway
+                uart.write(status(frames, words, late, BAUDS[rate], slots))
+                frames = words = late = 0
+        else:
+            if sm.tx_fifo() == 0:  # nonstop: one word queued at most, a new frame reaches the line within ~12 ms
+                for k in range(6):
+                    a = (nxt + k) % 6
+                    if slots[a]:
+                        i = word_at(a, slots[a])
+                        sm.put(WORDS[i], 8)
+                        sm.put(WORDS[i + 1], 8)
+                        words += 1
+                        nxt = a + 1
+                        break
+            if due_report:
+                report = ticks_ms()
+                uart.write(status(frames, words, late, BAUDS[rate], slots))
+                frames = words = 0
 
-
-def status(frames, words, baud, slots):
+def status(frames, words, late, baud, slots):
     """One line a second back over Bluetooth: what the Pico sees of the CU and of the computer."""
     s = _sync
     n, psum, pn, peak = s[0], s[2], s[3], s[4]
@@ -211,8 +285,9 @@ def status(frames, words, baud, slots):
     period = "%.2fms" % (psum / pn / 1000) if pn else "-"
     peak_v = peak * 3.3 / 65535 * SYNC_DIV
     driven = "".join("-" if v is None else "%X" % v[0] for v in slots)
-    return "pico sync=%s period=%s peak=%.1fV bursts=%d frames=%d/s words=%d/s baud=%d slots=%s\n" % (
-        "lost" if SYNC and lost else ("on" if SYNC else "off"), period, peak_v, n, frames, words, baud, driven)
+    return ("pico sync=%s period=%s peak=%.1fV bursts=%d frames=%d/s words=%d/s late=%d baud=%d slots=%s"
+            " shift=%d presence=%d repeat=%d\n") % ("lost" if SYNC and lost else ("on" if SYNC else "off"), period,
+                peak_v, n, frames, words, late, baud, driven, tune["shift"], tune["presence"], tune["repeat"])
 
 
 if rp2:
