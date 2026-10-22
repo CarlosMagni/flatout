@@ -50,6 +50,11 @@ _UNKNOWN = object()  # throttle actually applied by the CU is unknown
 CTL_HEARTBEAT_S = 0.3
 HB_PAUSE_MAX_S = 3.0  # hard ceiling of the hand-back test's heartbeat pause (it expires by itself)
 CTL_LANE_PRESS_S = 0.12  # lane button held for at least one rail cycle (75 ms)
+# the Pico ("P") is served by its own thread, never by the CU loop (each CU poll waits ~50 ms on the
+# AppConnect): a fader move or a button press reaches the Pico within PICO_PERIOD_S
+PICO_PERIOD_S = 0.01
+PICO_MIN_GAP_S = 0.02  # the Pico keeps only the latest frame: no need to coalesce like the CU's C table
+PICO_HEARTBEAT_S = 0.1  # well inside the Pico's 750 ms expiry, even over a hiccuping Bluetooth link
 # firmware versions with the C table: added in V338, identical in V339 (V336/V337 do not
 # dispatch C); checked against the official images, V339 rebuilt in firmware/reconstruction
 CTL_FIRMWARES = ("338", "339")
@@ -144,12 +149,15 @@ class CULink:
         # the Pico controller interface (cu/pico.py): when set, the bots go through it ("P")
         self._pico_device = pico_device
         self._pico = PicoWriter(pico_opener, self._pico_changed) if pico_opener else None
+        self._pico_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------ lifecycle
 
     def start(self) -> None:
         if self._pico is not None:
             self._pico.start()
+            self._pico_thread = threading.Thread(target=self._pico_service, name="pico-service", daemon=True)
+            self._pico_thread.start()
         self._thread = threading.Thread(target=self._run, name="cu-link", daemon=True)
         self._thread.start()
 
@@ -162,7 +170,11 @@ class CULink:
             if self._thread.is_alive():
                 logger.error("the link thread did not stop in time")
         if self._pico is not None:
-            self._pico.stop()  # writes the release frame queued by _shutdown, if any
+            if self._pico_thread is not None:
+                self._pico_thread.join(1.0)
+            if self.bot_transport == "P" and self.bots_supported:
+                self._send_ctl(None, self._final_values())  # last word, after the Pico's own thread
+            self._pico.stop()  # writes the release frame queued last
 
     # ------------------------------------------------------------ API bots
 
@@ -485,8 +497,27 @@ class CULink:
                 self._publish_stats(now - last_stats)
                 last_stats = now
 
+    def _final_values(self, active: list[int] | None = None) -> list[int | None]:
+        """The C frame on exit: every slot handed back, or the active bots held at 0."""
+        if self._safety.release_on_exit:
+            return [None] * 6
+        if active is None:
+            with self._lock:
+                active = [s for s in BOT_SLOTS if self._sent[s] is not None or self._target[s] is not None]
+        return [0 if s in active else None for s in BOT_SLOTS]
+
+    def _pico_service(self) -> None:
+        """The Pico's frames, apart from the CU loop: same model, heartbeat, holds and E-STOP."""
+        while not self._stop.is_set():
+            if self.bot_transport == "P":
+                try:
+                    self._service_ctl(None)
+                except Exception:
+                    logger.exception("Pico frames")
+            self._stop.wait(PICO_PERIOD_S)
+
     def _service(self, cu: RaceControlUnit) -> None:
-        if self.bot_transport in ("C", "P"):
+        if self.bot_transport == "C":
             self._service_ctl(cu)
         elif self.bot_transport == "B":
             self._service_bots(cu)
@@ -563,8 +594,11 @@ class CULink:
     def _service_ctl(self, cu: RaceControlUnit) -> None:
         """Software drivers through the stock C table: one frame for the 6 controllers."""
         now = time.monotonic()
-        heartbeat = min(self._safety.heartbeat_ms / 1000, CTL_HEARTBEAT_S)
-        min_gap = self._safety.min_bot_interval_ms / 1000
+        if self.bot_transport == "P":
+            heartbeat, min_gap = PICO_HEARTBEAT_S, PICO_MIN_GAP_S
+        else:
+            heartbeat = min(self._safety.heartbeat_ms / 1000, CTL_HEARTBEAT_S)
+            min_gap = self._safety.min_bot_interval_ms / 1000
         with self._lock:
             urgent, self._urgent = self._urgent, False
             if self._hb_pause_until and (urgent or now >= self._hb_pause_until):
@@ -676,10 +710,7 @@ class CULink:
             return
         if transport in ("C", "P"):
             try:
-                if self._safety.release_on_exit:
-                    self._send_ctl(cu, [None] * 6)
-                else:
-                    self._send_ctl(cu, [0 if s in active else None for s in BOT_SLOTS])
+                self._send_ctl(cu, self._final_values(active))
             except Exception:
                 logger.warning("could not release the C table (it expires by itself in ~0.75 s)")
             return

@@ -239,3 +239,29 @@ def test_bluetooth_pairing_through_blueutil(monkeypatch):
     monkeypatch.setattr(pico_mod, "blueutil", lambda: None)            # not macOS / not installed
     with pytest.raises(RuntimeError, match="blueutil"):
         pico_mod.bluetooth_devices(1)
+
+
+def test_pico_frames_do_not_wait_for_a_slow_cu(make_pico_link):
+    """Each CU poll waits on the AppConnect: the Pico's frames must not queue behind it."""
+    from .test_link import FakeConnection
+
+    class SlowConnection(FakeConnection):
+        def send(self, buf, offset=0, size=None):
+            super().send(buf, offset, size)
+            time.sleep(0.15)                             # a sluggish Bluetooth round trip
+
+    class SlowCU(FakeCU):
+        def connect(self):
+            self.opens += 1
+            return SlowConnection(self)
+
+    link, _, port, _ = make_pico_link(cu=SlowCU(bots=False, version=b"8338"))
+    for value in (5, 9, 3):
+        t0 = time.monotonic()
+        link.set_bot(2, value)
+        assert wait_for(lambda: port.frames and port.slots()[2] == (value, False))
+        assert time.monotonic() - t0 < 0.06, value       # not one CU poll (150 ms)
+    t0 = time.monotonic()
+    link.lane(2)
+    assert wait_for(lambda: port.slots()[2] == (3, True))
+    assert time.monotonic() - t0 < 0.06
