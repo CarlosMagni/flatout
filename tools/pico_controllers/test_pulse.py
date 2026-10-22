@@ -12,7 +12,7 @@ Docker), read back on the rails; skipped when the emulator is not available.
 import sys
 from pathlib import Path
 
-from main import DIRECT, FRAME, SYM_US, levels, parse
+from main import DIRECT, FRAME, SLOT_POS, SLOT_US, SYM_US, WORD_US, levels, parse, schedule
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -100,6 +100,36 @@ def check_model():
           " rising edges up to 80 us late still decode")
 
 
+def check_sync():
+    """Synced mode: each driven slot once per cycle in its time slot, the presence pulse in the burst."""
+    assert WORD_US * 10 == CYCLE
+    word_us, rounds = FRAME * SYM_US, 6
+    for k in range(4):                            # slots overlap neither each other, nor the burst
+        spans = sorted((us, us + word_us) for us, _ in schedule([(k, False)] * 6))
+        assert spans[0][0] >= WINDOW and spans[-1][1] <= CYCLE
+        assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(spans, spans[1:])), spans
+    out, prev, sent = [], 1, []
+    for r in range(rounds):
+        burst = r * CYCLE
+        for t, lv in ((burst + 60, 0), (burst + 310, 1)):          # presence pulse, 250 us
+            out.append((t, lv))
+        for us, a in schedule([(0, False)] * 6):
+            word = (a, (a + 3 * r) % 16, r & 1)
+            sent.append((burst, word))
+            t = burst + us
+            for lv in levels(*word):
+                if lv != prev:
+                    out.append((t, lv))
+                    prev = lv
+                t += SYM_US
+    got = cu_decode(out, range(0, rounds * CYCLE, CYCLE))
+    assert [w for _, w in got] == [w for _, w in sent], got[:6]
+    for (t, (a, g, lane)), (burst, _) in zip(got, sent):
+        assert t < burst + SLOT_POS[a] * WORD_US, (a, t - burst)        # decoded before the CU uses it
+    print("sync: %d rounds, every slot decoded once per cycle in its time slot, before the CU uses it,"
+          " none during the burst" % rounds)
+
+
 def check_emu():
     sys.path[:0] = [str(ROOT / "firmware" / "emu"), str(ROOT / "carreralib" / "src")]
     try:
@@ -150,5 +180,6 @@ if __name__ == "__main__":
         check_capture(sys.argv[sys.argv.index("--capture") + 1])
         sys.exit()
     check_model()
+    check_sync()
     if "--emu" in sys.argv:
         check_emu()
