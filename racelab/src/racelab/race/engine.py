@@ -336,7 +336,9 @@ class RaceEngine:
 
     def _set_state(self, new: str) -> None:
         prev, self.state = self.state, new
-        self._emit("session", {"state": new, "prev": prev, "type": self.settings.type})
+        # the title rides along: a UI that announces the session cannot rely on a state it has not received yet
+        self._emit("session", {"state": new, "prev": prev, "type": self.settings.type,
+                               "title": self.settings.title})
 
     def _racing_state(self) -> str:
         """`running` or `finishing`, even during a pause."""

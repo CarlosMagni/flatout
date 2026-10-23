@@ -78,7 +78,7 @@ is `hello.client`),
 | `track.set` / `track.positions` / `track.clear` | see [Track connector](#track-connector-track-shape--positions) | publish the track shape and car positions |
 | `connector.set` / `connector.clear` | see [Connector card](#connector-card) | show or remove this connection's card in the UI |
 | `tower.reset` | | clear the position tower display |
-| `log` | | the recent log entries (also sent in `hello`) |
+| `log` | | the recent log entries (also sent in `hello`): `{t, level, text}`, plus `key` and `params` when the UI has a translation (`srv.<key>` in `web/js/i18n.js`) |
 | `console.send` | `frame` | (advanced mode) send one raw frame, e.g. `"?"`; returns the CU's answer. `G`, `E`, `F`, `C` and `B` are refused |
 | `console.trace` | `polls` (bool) | include the `?` polls in the raw-frame subscription |
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |

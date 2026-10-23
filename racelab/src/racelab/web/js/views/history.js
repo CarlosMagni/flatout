@@ -594,9 +594,11 @@ class LapChart {
     this.tip.replaceChildren(...parts);
     this.tip.classList.remove("hidden");
     const hostW = this.host.clientWidth;
-    const left = Math.min(hostW - this.tip.offsetWidth / 2 - 4, Math.max(this.tip.offsetWidth / 2 + 4, nearest.x / k));
+    // box is in screen px, left/top in the page's own (zoomed on wide screens, style.css)
+    const z = svg.currentCSSZoom || 1;
+    const left = Math.min(hostW - this.tip.offsetWidth / 2 - 4, Math.max(this.tip.offsetWidth / 2 + 4, nearest.x / k / z));
     this.tip.style.left = `${left}px`;
-    this.tip.style.top = `${nearest.y / k}px`;
+    this.tip.style.top = `${nearest.y / k / z}px`;
   }
 
   leave() {

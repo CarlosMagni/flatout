@@ -295,9 +295,10 @@ class RaceLabApp:
             self.cfg, {"transport": transport, "device": device, "stock": stock}))
         label = {"none": "none", "ble": "Bluetooth AppConnect", "serial": f"serial {device}",
                  "sim": "virtual CU" + (" (stock firmware)" if stock else "")}[transport]
-        self._log("info", f"CU selected: {label}")
+        self._log("info", f"CU selected: {label}",
+                  "cu_selected." + transport + ("_stock" if transport == "sim" and stock else ""), device=device)
         if self.sim is not None and self.track_feed.clear():
-            self._log("info", "Connector track replaced by the virtual CU's")
+            self._log("info", "Connector track replaced by the virtual CU's", "track_replaced_sim")
         self._event("connection", {"transport": transport, "device": device or None})
         self._event("track", self.track_info())
         self._event("link", dict(self.link_info))
@@ -314,7 +315,10 @@ class RaceLabApp:
         if self.interface is not None:
             self.interface.start()
         self._save()
-        self._log("info", f"Controller interface: {port}" if port else "Controller interface removed")
+        if port:
+            self._log("info", f"Controller interface: {port}", "interface_set", port=port)
+        else:
+            self._log("info", "Controller interface removed", "interface_removed")
         self._event("link", dict(self.link_info))
 
     async def _stop_interface(self) -> None:
@@ -359,7 +363,8 @@ class RaceLabApp:
         if self.interface is not None:
             self.interface.start()
         self._ticker = asyncio.create_task(self._tick_loop(), name="racelab-tick")
-        self._log("info", f"RaceLab {__version__} — {self._mode_label()} mode")
+        self._log("info", f"RaceLab {__version__} — {self._mode_label()} mode",
+                  f"started.{self._mode_label()}", version=__version__)
 
     async def stop(self) -> None:
         if self._ticker:
@@ -398,8 +403,12 @@ class RaceLabApp:
     def _event(self, name: str, data: dict[str, Any]) -> None:
         self._broadcast({"type": "event", "name": name, "data": data, "t": time.monotonic()})
 
-    def _log(self, level: str, text: str) -> None:
+    def _log(self, level: str, text: str, key: str | None = None, /, **params: Any) -> None:
+        """`text` (English) goes to the log file and the API; `key` + `params` let the UI show
+        the entry in its own language ("srv.<key>" in web/js/i18n.js, `text` when it has no such key)."""
         entry = {"t": time.time(), "level": level, "text": text}
+        if key:
+            entry.update(key=key, params=params)
         self.log.append(entry)
         getattr(logger, "warning" if level == "warn" else level, logger.info)(text)
         self._event("log", entry)
@@ -445,9 +454,11 @@ class RaceLabApp:
             self.link_info.update(interface=msg.state, interface_error=msg.error, interface_info=msg.info)
             if msg.state != was:
                 if msg.state == "lost":
-                    self._log("warn", f"Controller interface lost: {msg.error} — bots held at 0, reconnecting…")
+                    self._log("warn", f"Controller interface lost: {msg.error} — bots held at 0, reconnecting…",
+                              "interface_lost", error=msg.error)
                 elif msg.state == "connected":
-                    self._log("info", f"Controller interface connected ({msg.device})")
+                    self._log("info", f"Controller interface connected ({msg.device})", "interface_connected",
+                              device=msg.device)
                     if was == "lost":
                         self.bots.outage()  # docs/bot-protocol.md §1: throttle 0 before resuming
             self._event("link", dict(self.link_info))
@@ -467,13 +478,18 @@ class RaceLabApp:
                    "B": "bots ready (bot firmware module)",
                    "I": "bots through the controller interface"}.get(
                 msg.bot_transport, "bots unavailable on this CU")
-            self._log("info", f"CU connected ({self.link_info['transport']}, v{msg.version}) — {how}")
+            self._log("info", f"CU connected ({self.link_info['transport']}, v{msg.version}) — {how}",
+                      "cu_connected." + (msg.bot_transport if msg.bot_transport in ("C", "B", "I") else "none"),
+                      transport=self.link_info["transport"], version=msg.version)
             if self.preferred_mode == "advanced" and msg.bots_supported is False:
-                self._log("warn", "Bots unavailable on this CU: normal mode")
+                self._log("warn", "Bots unavailable on this CU: normal mode", "bots_unavailable")
         elif msg.state == "lost":
-            self._log("warn", f"CU link lost{f': {msg.error}' if msg.error else ''} — reconnecting…")
+            if msg.error:
+                self._log("warn", f"CU link lost: {msg.error} — reconnecting…", "cu_lost_error", error=msg.error)
+            else:
+                self._log("warn", "CU link lost — reconnecting…", "cu_lost")
         elif msg.state == "updating":
-            self._log("warn", "Firmware update: do not power off the CU or the AppConnect")
+            self._log("warn", "Firmware update: do not power off the CU or the AppConnect", "fw_updating")
 
     def _on_engine_event(self, name: str, data: dict[str, Any]) -> None:
         self.bots.on_engine_event(name, data)
@@ -485,20 +501,24 @@ class RaceLabApp:
         if self._recording:
             self.recorder.record(name, data, time.monotonic())
         if name == "false_start":
-            self._log("warn", "False start!")
+            self._log("warn", "False start!", "false_start")
         elif name == "finish" and data.get("position") == 1:
-            self._log("info", f"Winner: {self._name(data['slot'])}")
+            self._log("info", f"Winner: {self._name(data['slot'])}", "winner",
+                      name=self._name(data["slot"]), slot=data["slot"])
         elif name == "elimination":
-            self._log("info", f"Eliminated: {self._name(data['slot'])}")
+            self._log("info", f"Eliminated: {self._name(data['slot'])}", "eliminated",
+                      name=self._name(data["slot"]), slot=data["slot"])
         self._event(name, data)
 
     def _on_bot_event(self, name: str, data: dict[str, Any]) -> None:
         if name == "agent_lost" and data.get("reason") == "estop":
-            self._log("warn", f"E-STOP: agent {data['agent']} must call bot.claim again (slot {data['slot'] + 1})")
+            self._log("warn", f"E-STOP: agent {data['agent']} must call bot.claim again (slot {data['slot'] + 1})",
+                      "agent_estop", agent=data["agent"], car=data["slot"] + 1)
         elif name == "agent_lost":
-            self._log("warn", f"Agent {data['agent']} disconnected: slot {data['slot'] + 1} at throttle 0")
+            self._log("warn", f"Agent {data['agent']} disconnected: slot {data['slot'] + 1} at throttle 0",
+                      "agent_lost", agent=data["agent"], car=data["slot"] + 1)
         elif name == "bots_reset":
-            self._log("warn", "Reconnection: bot throttle reset to 0")
+            self._log("warn", "Reconnection: bot throttle reset to 0", "bots_reset")
         self._event(name, data)
 
     def _begin_recording(self) -> None:
@@ -650,10 +670,11 @@ class RaceLabApp:
     def client_gone(self, client: str) -> None:
         self.bots.agent_gone(client)
         if self._connectors.pop(client, None) is not None:
-            self._log("info", f"Connector \"{client}\" disconnected: card removed")
+            self._log("info", f"Connector \"{client}\" disconnected: card removed", "connector_gone", client=client)
             self._event("connectors", {"connectors": self.connectors()})
         if self.track_feed.clear(client):
-            self._log("info", f"Track connector \"{client}\" disconnected: map removed")
+            self._log("info", f"Track connector \"{client}\" disconnected: map removed", "track_connector_gone",
+                      client=client)
             self._event("track", self.track_info())
 
     # connector card: a name, a status and a link to the connector's own page (never rendered here)
@@ -710,7 +731,9 @@ class RaceLabApp:
             self.track_feed.set_geometry(client, geometry)
         except TrackError as e:
             raise OpError(str(e)) from None
-        self._log("info", f"Track provided by \"{client}\" ({len(self.track_feed.geometry['points'])} points)")
+        points = len(self.track_feed.geometry["points"])
+        self._log("info", f"Track provided by \"{client}\" ({points} points)", "track_provided",
+                  client=client, points=points)
         self._event("track", self.track_info())
         return self.track_geometry()
 
@@ -833,11 +856,11 @@ class RaceLabApp:
 
     def _op_estop(self, args, client):
         self.bots.estop()
-        self._log("warn", "E-STOP: throttle 0 on all bots")
+        self._log("warn", "E-STOP: throttle 0 on all bots", "estop")
 
     def _op_estop_clear(self, args, client):
         self.bots.clear_estop()
-        self._log("info", "E-STOP cleared")
+        self._log("info", "E-STOP cleared", "estop_cleared")
 
     # app
     def advanced_unavailable(self) -> str | None:
@@ -862,9 +885,10 @@ class RaceLabApp:
         self.mode = mode
         self.bots.enabled = mode == "advanced"
         if mode == "advanced":
-            self._log("info", "Bots on")
+            self._log("info", "Bots on", "bots_on")
         elif self.preferred_mode == "advanced" and self.link_info["bots_supported"] is False:
-            self._log("warn", f"Normal mode: {reason}")
+            # bots_supported is False: the reason is always "this CU cannot take software drivers"
+            self._log("warn", f"Normal mode: {reason}", "normal_forced", version=self.link_info.get("version") or "?")
         self._event("mode", {"mode": mode, "preferred": self.preferred_mode})
 
     def _op_mode(self, args, client):
@@ -882,7 +906,7 @@ class RaceLabApp:
         self._save()
         self._apply_mode()
         if mode == self.mode == "classic":  # turning bots on already logs "Bots on"
-            self._log("info", "Normal mode")
+            self._log("info", "Normal mode", "normal_mode")
         return self.mode
 
     def _op_car_program(self, args, client):
@@ -901,7 +925,8 @@ class RaceLabApp:
                 done.append(key)
         if not done:
             raise OpError("nothing to program (speed, brake, fuel)")
-        self._log("info", f"Car {slot + 1} programmed: {', '.join(f'{k}={args[k]}' for k in done)}")
+        settings = ", ".join(f"{k}={args[k]}" for k in done)
+        self._log("info", f"Car {slot + 1} programmed: {settings}", "car_programmed", car=slot + 1, settings=settings)
 
     async def _op_car_program_live(self, args, client):
         """Set the level of the car ON the track by simulating the CU keys (works on
@@ -927,7 +952,8 @@ class RaceLabApp:
             self.link.press(button)
             await asyncio.sleep(LIVE_PRESS_GAP_S)
         self.link.press(BUTTONS["start"])  # validate + transmit to the car on the track
-        self._log("info", f"Live program: {field} {current} -> {level} ({steps} steps + START)")
+        self._log("info", f"Live program: {field} {current} -> {level} ({steps} steps + START)", "live_program",
+                  field=field, current=current, target=level, steps=steps)
 
     def _op_tower_reset(self, args, client):
         self.tower.clear()
@@ -977,7 +1003,7 @@ class RaceLabApp:
             raise OpError("available only with the virtual CU")
         seconds = float(args.get("seconds", 3.0))
         self.sim.drop_link(seconds)
-        self._log("warn", f"Virtual CU: simulated link drop ({seconds:.0f} s)")
+        self._log("warn", f"Virtual CU: simulated link drop ({seconds:.0f} s)", "sim_drop", seconds=f"{seconds:.0f}")
 
     # firmware (DFU)
     def _fw_reset(self) -> dict[str, Any]:
@@ -1011,7 +1037,8 @@ class RaceLabApp:
         self.fw.update(state="running", stage="prepare", total=len(image.lines), image=image.info(),
                        recovery=recovery, started=time.time(), _since=time.monotonic())
         self._log("warn", f"Firmware update: {image.name} ({len(image.lines)} lines"
-                          f"{', recovery' if recovery else ''})")
+                          f"{', recovery' if recovery else ''})",
+                  "fw_start_recovery" if recovery else "fw_start", name=image.name, lines=len(image.lines))
         self._event("firmware", self._op_fw_status(args, client))
         return self._op_fw_status(args, client)
 
@@ -1067,13 +1094,14 @@ class RaceLabApp:
                   result={"version": st.version, "bots_supported": st.bots_supported,
                           "bot_module": st.bot_module})
         bots = {True: "bot module detected", False: "firmware without bot module", None: "not probed"}
-        self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bot_module]}")
+        self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bot_module]}",
+                  "fw_done." + {True: "module", False: "no_module", None: "unknown"}[st.bot_module], version=st.version)
         self._event("firmware", self._op_fw_status({}, ""))
 
     def _firmware_failed(self, error: str) -> None:
         self.fw.update(state="failed", error=error, eta_s=None)
         self._log("error", f"Firmware update: {error}. The CU can still be re-flashed "
-                           f"(factory bootloader): retry, in recovery mode if needed.")
+                           f"(factory bootloader): retry, in recovery mode if needed.", "fw_failed", error=error)
         self._event("firmware", self._op_fw_status({}, ""))
 
     def add_firmware(self, data: bytes, name: str) -> dict[str, Any]:
@@ -1081,7 +1109,8 @@ class RaceLabApp:
             image = self.firmware_lib.add(data, name)
         except ImageError as e:
             raise OpError(str(e)) from None
-        self._log("info", f"Firmware image imported: {image.name} ({len(image.lines)} lines)")
+        self._log("info", f"Firmware image imported: {image.name} ({len(image.lines)} lines)", "fw_imported",
+                  name=image.name, lines=len(image.lines))
         return image.info()
 
     # ------------------------------------------------------------ hardware test (System -> Hardware test)
@@ -1204,7 +1233,8 @@ class RaceLabApp:
                 self._hw_phase("done", aborted=out.get("aborted"))
                 self._hw = None
         self._log("info", f"Hardware test {kind} on slot {slot + 1}: "
-                          f"{'aborted (' + out['aborted'] + ')' if out.get('aborted') else 'done'}")
+                          f"{'aborted (' + out['aborted'] + ')' if out.get('aborted') else 'done'}",
+                  "hw_aborted" if out.get("aborted") else "hw_done", kind=kind, car=slot + 1, reason=out.get("aborted"))
         return out
 
     def _hw_throttle(self, args, default: int | None = None) -> int:
@@ -1323,7 +1353,7 @@ class RaceLabApp:
             os.replace(tmp, path)
         except OSError as e:
             raise OpError(f"cannot save the report: {e}") from None
-        self._log("info", f"Hardware test report saved: {path.name}")
+        self._log("info", f"Hardware test report saved: {path.name}", "hw_saved", name=path.name)
         return {"name": path.name, "path": str(path), "report": report}
 
     # connection and application
@@ -1376,7 +1406,7 @@ class RaceLabApp:
             raise OpError("quitting from the interface is unavailable")
         if self.fw["state"] in ("running", "verifying"):
             raise OpError("firmware update in progress: cannot quit now")
-        self._log("info", "Quit requested from the interface")
+        self._log("info", "Quit requested from the interface", "quit")
         self.loop.call_later(0.3, self.request_quit)  # time for the reply to go out
 
     def _save(self) -> None:

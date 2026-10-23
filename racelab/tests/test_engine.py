@@ -455,7 +455,7 @@ def test_external_pause_then_go_resumes_and_neutralizes_laps():
     assert h.named("lap")[0]["neutralized"] is False
     h.status(1, at=16.0)  # someone presses Start on the CU
     assert h.engine.state == "paused"
-    assert h.named("session")[-1] == {"state": "paused", "prev": "running", "type": "race"}
+    assert h.named("session")[-1] == {"state": "paused", "prev": "running", "type": "race", "title": "Race · 10 laps"}
     assert h.snap()["session"]["flag"] == "red"
     h.now = 20.0
     assert h.snap()["session"]["elapsed_s"] == 9.0  # 16 - 7: frozen during the pause
@@ -1127,7 +1127,7 @@ def test_configure_resets_everything_and_announces_session():
     h.configure(type="practice")
     assert h.engine.state == "grid"
     assert h.actions.calls == [("reset_timer",), ("ignore", 0)]
-    assert h.named("session") == [{"state": "grid", "prev": "idle", "type": "practice"}]
+    assert h.named("session") == [{"state": "grid", "prev": "idle", "type": "practice", "title": "Practice"}]
     h.plain_start()
     h.cross(0, B)
     h.cross(0, B + 5000)
@@ -1135,7 +1135,7 @@ def test_configure_resets_everything_and_announces_session():
     assert h.engine.laps()
     h.configure(type="race", laps=5)  # from finished
     assert h.engine.state == "grid" and h.engine.laps() == []
-    assert h.named("session")[-1] == {"state": "grid", "prev": "finished", "type": "race"}
+    assert h.named("session")[-1] == {"state": "grid", "prev": "finished", "type": "race", "title": "Race · 5 laps"}
     snap = h.snap()
     assert snap["session"]["best"] is None and snap["session"]["laps"] == 5
     assert all(c["position"] is None and c["laps"] == 0 for c in snap["cars"])

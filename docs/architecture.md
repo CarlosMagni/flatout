@@ -232,7 +232,7 @@ class RaceEngine:
 
 | name | data |
 |---|---|
-| `session` | `{state, prev, type}` |
+| `session` | `{state, prev, type, title}` |
 | `phase` | `{phase, lights, blink}` |
 | `false_start` | `{}` |
 | `crossing` | `{slot, sector, cu_ts}` |

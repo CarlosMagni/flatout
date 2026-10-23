@@ -821,6 +821,59 @@ const en = {
   "hw.recap_short": "Car {n} · throttle {throttle}",
   "hw.lane_min": "(this test runs at least {s} s)",
   "hw.move.timer": "Running… {s} s of {total} s. Watch the car.",
+
+  // ---- server log entries (app.py _log key -> "srv.<key>"; see logText below)
+  "srv.transport.ble": "Bluetooth",
+  "srv.transport.serial": "serial",
+  "srv.transport.sim": "virtual CU",
+  "srv.started.normal": "RaceLab {version} — normal mode",
+  "srv.started.bots": "RaceLab {version} — with bots",
+  "srv.cu_selected.none": "No CU",
+  "srv.cu_selected.ble": "CU selected: Bluetooth AppConnect",
+  "srv.cu_selected.serial": "CU selected: serial cable {device}",
+  "srv.cu_selected.sim": "CU selected: virtual CU",
+  "srv.cu_selected.sim_stock": "CU selected: virtual CU (stock firmware)",
+  "srv.cu_connected.C": "CU connected ({transport}, v{version}) — bots ready (the CU as it is, no firmware update needed)",
+  "srv.cu_connected.B": "CU connected ({transport}, v{version}) — bots ready (bot firmware module)",
+  "srv.cu_connected.I": "CU connected ({transport}, v{version}) — bots through the controller interface",
+  "srv.cu_connected.none": "CU connected ({transport}, v{version}) — bots unavailable on this CU",
+  "srv.cu_lost": "CU link lost — reconnecting…",
+  "srv.cu_lost_error": "CU link lost: {error} — reconnecting…",
+  "srv.bots_unavailable": "Bots unavailable on this CU: normal mode",
+  "srv.bots_on": "Bots on",
+  "srv.normal_mode": "Normal mode",
+  "srv.normal_forced": "Normal mode: this CU (firmware {version}) cannot take software drivers",
+  "srv.false_start": "False start!",
+  "srv.winner": "Winner: {name}",
+  "srv.eliminated": "Eliminated: {name}",
+  "srv.estop": "STOP: throttle 0 on all bots",
+  "srv.estop_cleared": "STOP released",
+  "srv.bots_reset": "Reconnection: bot throttle reset to 0",
+  "srv.agent_estop": "STOP: agent {agent} must call bot.claim again (car {car})",
+  "srv.agent_lost": "Agent {agent} disconnected: car {car} at throttle 0",
+  "srv.interface_set": "Controller interface: {port}",
+  "srv.interface_removed": "Controller interface removed",
+  "srv.interface_connected": "Controller interface connected ({device})",
+  "srv.interface_lost": "Controller interface lost: {error} — bots held at 0, reconnecting…",
+  "srv.track_replaced_sim": "Connector track replaced by the virtual CU's",
+  "srv.connector_gone": "Connector \"{client}\" disconnected: card removed",
+  "srv.track_connector_gone": "Track connector \"{client}\" disconnected: map removed",
+  "srv.track_provided": "Track provided by \"{client}\" ({points} points)",
+  "srv.car_programmed": "Car {car} programmed: {settings}",
+  "srv.live_program": "Live setup: {field} {current} → {target} ({steps} presses + START)",
+  "srv.sim_drop": "Virtual CU: simulated link drop ({seconds} s)",
+  "srv.fw_updating": "Firmware update: do not power off the CU or the AppConnect",
+  "srv.fw_start": "Firmware update: {name} ({lines} lines)",
+  "srv.fw_start_recovery": "Firmware update: {name} ({lines} lines, recovery)",
+  "srv.fw_done.module": "Firmware updated — CU v{version}, bot module detected",
+  "srv.fw_done.no_module": "Firmware updated — CU v{version}, firmware without bot module",
+  "srv.fw_done.unknown": "Firmware updated — CU v{version}, bot module not probed",
+  "srv.fw_failed": "Firmware update: {error}. The CU can still be re-flashed (factory bootloader): retry, in recovery mode if needed.",
+  "srv.fw_imported": "Firmware image imported: {name} ({lines} lines)",
+  "srv.hw_done": "Hardware test {kind} on car {car}: done",
+  "srv.hw_aborted": "Hardware test {kind} on car {car}: aborted ({reason})",
+  "srv.hw_saved": "Hardware test report saved: {name}",
+  "srv.quit": "Quit requested from the interface",
 };
 
 const fr = {
@@ -1605,6 +1658,59 @@ const fr = {
   "hw.recap_short": "Voiture {n} · gaz {throttle}",
   "hw.lane_min": "(ce test dure au moins {s} s)",
   "hw.move.timer": "En cours… {s} s sur {total} s. Surveille la voiture.",
+
+  // ---- entrées du journal du serveur
+  "srv.transport.ble": "Bluetooth",
+  "srv.transport.serial": "câble série",
+  "srv.transport.sim": "CU virtuelle",
+  "srv.started.normal": "RaceLab {version} — mode normal",
+  "srv.started.bots": "RaceLab {version} — avec bots",
+  "srv.cu_selected.none": "Plus de CU",
+  "srv.cu_selected.ble": "CU choisie : AppConnect Bluetooth",
+  "srv.cu_selected.serial": "CU choisie : câble série {device}",
+  "srv.cu_selected.sim": "CU choisie : CU virtuelle",
+  "srv.cu_selected.sim_stock": "CU choisie : CU virtuelle (firmware stock)",
+  "srv.cu_connected.C": "CU connectée ({transport}, v{version}) — bots prêts (la CU telle quelle, aucune mise à jour du firmware)",
+  "srv.cu_connected.B": "CU connectée ({transport}, v{version}) — bots prêts (module firmware bots)",
+  "srv.cu_connected.I": "CU connectée ({transport}, v{version}) — bots via l'interface manettes",
+  "srv.cu_connected.none": "CU connectée ({transport}, v{version}) — bots indisponibles sur cette CU",
+  "srv.cu_lost": "Lien CU perdu — reconnexion…",
+  "srv.cu_lost_error": "Lien CU perdu : {error} — reconnexion…",
+  "srv.bots_unavailable": "Bots indisponibles sur cette CU : mode normal",
+  "srv.bots_on": "Bots activés",
+  "srv.normal_mode": "Mode normal",
+  "srv.normal_forced": "Mode normal : cette CU (firmware {version}) ne peut pas prendre de pilotes logiciels",
+  "srv.false_start": "Faux départ !",
+  "srv.winner": "Vainqueur : {name}",
+  "srv.eliminated": "Éliminé : {name}",
+  "srv.estop": "STOP : gaz 0 sur tous les bots",
+  "srv.estop_cleared": "STOP levé",
+  "srv.bots_reset": "Reconnexion : gaz des bots remis à 0",
+  "srv.agent_estop": "STOP : l'agent {agent} doit refaire bot.claim (voiture {car})",
+  "srv.agent_lost": "Agent {agent} déconnecté : voiture {car} à gaz 0",
+  "srv.interface_set": "Interface manettes : {port}",
+  "srv.interface_removed": "Interface manettes retirée",
+  "srv.interface_connected": "Interface manettes connectée ({device})",
+  "srv.interface_lost": "Interface manettes perdue : {error} — bots tenus à 0, reconnexion…",
+  "srv.track_replaced_sim": "Tracé du connecteur remplacé par celui de la CU virtuelle",
+  "srv.connector_gone": "Connecteur « {client} » déconnecté : carte retirée",
+  "srv.track_connector_gone": "Connecteur de piste « {client} » déconnecté : tracé retiré",
+  "srv.track_provided": "Tracé fourni par « {client} » ({points} points)",
+  "srv.car_programmed": "Voiture {car} programmée : {settings}",
+  "srv.live_program": "Réglage en piste : {field} {current} → {target} ({steps} appuis + START)",
+  "srv.sim_drop": "CU virtuelle : coupure du lien simulée ({seconds} s)",
+  "srv.fw_updating": "Mise à jour du firmware : n'éteins ni la CU ni l'AppConnect",
+  "srv.fw_start": "Mise à jour du firmware : {name} ({lines} lignes)",
+  "srv.fw_start_recovery": "Mise à jour du firmware : {name} ({lines} lignes, mode secours)",
+  "srv.fw_done.module": "Firmware mis à jour — CU v{version}, module bots détecté",
+  "srv.fw_done.no_module": "Firmware mis à jour — CU v{version}, firmware sans module bots",
+  "srv.fw_done.unknown": "Firmware mis à jour — CU v{version}, module bots non vérifié",
+  "srv.fw_failed": "Mise à jour du firmware : {error}. La CU peut toujours être reflashée (bootloader d'usine) : réessaie, en mode secours si besoin.",
+  "srv.fw_imported": "Image firmware importée : {name} ({lines} lignes)",
+  "srv.hw_done": "Test matériel {kind} sur la voiture {car} : terminé",
+  "srv.hw_aborted": "Test matériel {kind} sur la voiture {car} : interrompu ({reason})",
+  "srv.hw_saved": "Rapport de test matériel enregistré : {name}",
+  "srv.quit": "Arrêt demandé depuis l'interface",
 };
 
 export const DICTIONARIES = { en, fr };
@@ -1642,6 +1748,16 @@ export function tOr(key, fallback) {
 // language. A name the user typed is left as it is.
 export function driverName(name, slot) {
   return name === `Driver ${slot + 1}` ? t("driver.n", { n: slot + 1 }) : name;
+}
+
+// A server log entry in the UI language: "srv.<key>" with its params; the server's English
+// text when the entry has no key (older server) or the dictionary does not know it.
+export function logText(entry) {
+  if (!entry.key || lookup(`srv.${entry.key}`) === undefined) return entry.text;
+  const vars = { ...entry.params };
+  if (vars.name != null && vars.slot != null) vars.name = driverName(vars.name, vars.slot);
+  if (vars.transport) vars.transport = tOr(`srv.transport.${vars.transport}`, vars.transport);
+  return t(`srv.${entry.key}`, vars);
 }
 
 // Fills the static markup of index.html: data-i18n="key" sets the text, and

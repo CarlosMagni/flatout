@@ -1,7 +1,7 @@
 // System screen: CU link, CU buttons, garage (car programming), raw console,
 // API and log.
 import { h, inkOn, setText, toggle, wallTime } from "../dom.js";
-import { LANGUAGES, lang, locale, setLang, t } from "../i18n.js";
+import { LANGUAGES, lang, locale, logText, setLang, t } from "../i18n.js";
 import { onEvent, request, store } from "../store.js";
 import { Segmented, Stepper, Toggle, confirmModal, copyText, fillConnectors, panel, run, toast } from "../ui/components.js";
 import { FirmwarePanel } from "./firmware.js";
@@ -472,7 +472,7 @@ export class SystemView {
   logItem(entry) {
     const cls = { warn: "warn", error: "bad" }[entry.level] || "";
     return h("li", { title: new Date(entry.t * 1000).toLocaleString(locale) },
-      h("span.t", { text: wallTime(entry.t) }), h(`span${cls ? "." + cls : ""}`, { text: entry.text }));
+      h("span.t", { text: wallTime(entry.t) }), h(`span${cls ? "." + cls : ""}`, { text: logText(entry) }));
   }
 
   addLog(entry) {

@@ -141,8 +141,10 @@ export class ScreenView {
     setText(this.clock, sess.state === "idle" ? "" : clock(sess.elapsed_s));
     this.paintLights(this.lightsSmall, state.cu);
 
-    // start procedure, false start, checkered flag: shown big in the center
-    const starting = sess.state === "starting" || (state.cu.phase >= 1 && state.cu.phase <= 7 && sess.state !== "running");
+    // start procedure, false start, checkered flag: shown big in the center. A finished (or reset)
+    // session leaves the CU armed on purpose (five lights hold the cars): not a start, the podium stays
+    const starting = sess.state === "starting"
+      || (state.cu.phase >= 1 && state.cu.phase <= 7 && !["running", "finished", "idle"].includes(sess.state));
     let banner = "", bannerKind = "";
     if (sess.false_start || state.cu.phase >= 8) { banner = t("state.false_start"); bannerKind = "stop"; }
     else if (sess.state === "finishing") { banner = t("state.finishing"); bannerKind = "checkered"; }

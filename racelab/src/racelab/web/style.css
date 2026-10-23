@@ -766,6 +766,16 @@ body.fw-on main { padding-top: 56px; }
   .trow > :nth-child(5) { display: none; }
 }
 
+/* ------------------------------------------------------------ wide screens: the whole UI scales up
+
+   A TV or a big monitor by the track is read from 1-3 m, and the pages are drawn for ~1440 px:
+   past 1800 px everything grows instead of spreading out. Steps, not a smooth scale; converting
+   the px sizes to rem would allow one. `zoom` scales vh too, hence no min-height. The big screen
+   sizes itself on the viewport and is left alone. */
+@media (min-width: 1800px) { body:not(.bigscreen) { zoom: 1.25; min-height: 0; } }
+@media (min-width: 2400px) { body:not(.bigscreen) { zoom: 1.6; } }
+@media (min-width: 3200px) { body:not(.bigscreen) { zoom: 2; } }
+
 /* ------------------------------------------------------------ big screen (readable from several meters away) */
 
 body.bigscreen .topbar, body.bigscreen .fw-banner { display: none; }
@@ -808,7 +818,8 @@ body.bigscreen { background: #000; overflow: hidden; }
 
 /* the column labels and the rows share one grid template (--bs-cols) */
 .bs-board {
-  --rowh: calc((71vh - (var(--n) - 1) * 1.2vh) / var(--n));
+  --rows-h: 71vh;
+  --rowh: calc((var(--rows-h) - (var(--n) - 1) * 1.2vh) / var(--n));
   --bs-cols: 6vw min(calc(var(--rowh) * .8), 7vw) minmax(0, 1fr) 7vw 13vw 12vw 10vw;
   display: flex;
   flex-direction: column;
@@ -918,6 +929,8 @@ body.bigscreen { background: #000; overflow: hidden; }
   cursor: pointer;
 }
 .bs-stop:hover { background: rgba(255, 69, 58, .3); }
+/* the pill sits under the board: the rows make room for it instead of running under it */
+.bs:has(.bs-stop:not(.hidden)) .bs-board { --rows-h: 66vh; }
 .bs-stop.engaged, .bs-stop:disabled { background: var(--stop-solid); border-color: #fff; color: #fff; opacity: 1; cursor: default; animation: pulse 1.2s infinite; }
 .bs-controls { position: fixed; right: 2vw; bottom: 2vh; display: flex; gap: 8px; opacity: 0; transition: opacity .2s; }
 .bs.show-controls .bs-controls, .bs-controls:focus-within { opacity: 1; }

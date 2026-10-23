@@ -2,7 +2,7 @@
 import {
   GATE_LABEL, STATE_CHIP, STATE_LABEL, clock, gap, h, inkOn, lapTime, s, setText, toggle, wallTime,
 } from "../dom.js";
-import { t, tOr } from "../i18n.js";
+import { logText, t, tOr } from "../i18n.js";
 import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
 import { FuelGauge, Fader, fillConnectors, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
 import { hub } from "../input.js";
@@ -116,7 +116,7 @@ export class RaceView {
     this.feed.replaceChildren();
     const entries = (store.log || []).slice(-15);
     if (!entries.length) this.feed.append(h("li.none", { text: t("race.feed_empty") }));
-    for (const entry of entries) this.addFeed(entry.text, entry.level, entry.t);
+    for (const entry of entries) this.addFeed(logText(entry), entry.level, entry.t);
   }
 
   // ------------------------------------------------------------ update
@@ -173,8 +173,12 @@ export class RaceView {
     this.renderActions(sess.state);
   }
 
+  // a real button (not a ghost link): the big screen is THE view for people standing by the track
   bigScreenButton() {
-    return h("a.btn.ghost", { href: "#/screen", title: t("race.big_screen_title") }, t("race.big_screen"));
+    const tv = s("svg", { viewBox: "0 0 24 24", width: 16, height: 16, fill: "none", stroke: "currentColor",
+      "stroke-width": 2, "stroke-linecap": "round", "aria-hidden": "true" },
+    s("rect", { x: 2, y: 4, width: 20, height: 13, rx: 2 }), s("path", { d: "M8 21h8M12 17v4" }));
+    return h("a.btn", { href: "#/screen", title: t("race.big_screen_title") }, tv, t("race.big_screen"));
   }
 
   renderActions(st) {
@@ -267,7 +271,8 @@ export class RaceView {
     const quick = (label, settings, startNow) => h("button.btn", {
       onclick: async () => {
         try {
-          await run("race.setup", { settings });
+          // the button's label is the title, in the UI language (the server's default title is English)
+          await run("race.setup", { settings: { ...settings, title: label } });
           if (startNow) await run("race.start");
         } catch { /* toast already shown */ }
       },
@@ -347,7 +352,8 @@ export class RaceView {
     for (const el of order) {
       const top = before.get(el);
       if (top == null) continue;
-      const dy = top - el.getBoundingClientRect().top;
+      // rects are in screen px, translateY in the page's own (zoomed on wide screens, style.css)
+      const dy = (top - el.getBoundingClientRect().top) / (el.currentCSSZoom || 1);
       if (!dy) continue;
       el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }],
         { duration: 420, easing: "cubic-bezier(.2,.7,.2,1)" });
@@ -397,7 +403,7 @@ export class RaceView {
 
   onEvent(name, data) {
     const SESSION_FEED = {
-      grid: () => t("feed.session_ready", { title: this.state?.session.title || "" }),
+      grid: () => t("feed.session_ready", { title: data.title || this.state?.session.title || "" }),
       running: (prev) => (prev === "starting" ? t("feed.start") : prev === "paused" ? t("feed.resume") : null),
       paused: () => t("feed.paused"),
       finishing: () => t("feed.finishing"),
@@ -407,7 +413,7 @@ export class RaceView {
       const text = SESSION_FEED[data.state]?.(data.prev);
       if (text) this.addFeed(text, data.state === "paused" ? "warn" : "info");
     } else if (name === "log") {
-      this.addFeed(data.text, data.level, data.t);
+      this.addFeed(logText(data), data.level, data.t);
     } else if (name === "lap" && data.session_best && !data.neutralized) {
       const car = this.state?.cars.find((c) => c.slot === data.slot);
       this.addFeed(t("feed.best_lap", { name: car?.name || "#" + (data.slot + 1), time: lapTime(data.ms) }), "sb");
