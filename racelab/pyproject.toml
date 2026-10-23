@@ -25,6 +25,7 @@ dependencies = [
     "aiohttp >= 3.9",
     "bleak >= 3.0",
     "pyserial >= 3.5",
+    "pyobjc-framework-IOBluetooth; sys_platform == 'darwin'",  # a Bluetooth serial module's RFCOMM channel (drive/rfcomm.py)
     "numpy",            # the predictive (MPC) pilot of the race brain
 ]
 

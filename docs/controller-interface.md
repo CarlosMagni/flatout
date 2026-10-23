@@ -84,6 +84,13 @@ for instance live tuning from a terminal. The reference Pico takes `#shift=<us>`
   A Bluetooth module that is not paired yet appears below the ports, with *Pair and use*:
   on macOS, RaceLab pairs it itself through [blueutil](https://github.com/toy/blueutil)
   (`brew install blueutil` once). You can also set it in the file: `[interface] port`.
+- **Bluetooth modules on macOS** are listed as `bt:<address>` (e.g. `bt:00-22-09-01-82-7a`, label
+  "… (Bluetooth)"), and *Pair and use* picks that entry. RaceLab then opens the module's RFCOMM
+  channel itself (IOBluetooth, in a small helper process: `racelab/drive/rfcomm.py`) instead of
+  the `/dev/cu.<name>` port. That port is not dependable on recent macOS: opening it does not bring
+  a dropped link back, and its node often does not come back either, so it only worked right after
+  pairing. Over RFCOMM the module reconnects every time (~2 s), paired once. It needs the Bluetooth
+  permission of whatever launched RaceLab; without it, the `bt:` entries are not listed.
 - **Next to a real CU only:** the virtual CU drives its own cars.
 - **All the bots go through it** while it is set (link field `bot_transport: "I"`). The CU link
   keeps the timing and the race state; nothing is sent to the CU's `C` table.

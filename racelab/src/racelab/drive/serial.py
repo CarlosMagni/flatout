@@ -6,6 +6,7 @@ serial) works with it, with no Python to write: controller_interfaces/pico/ is o
 
 from __future__ import annotations
 
+import functools
 import os
 from collections.abc import Callable
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from carreralib import ControlUnit
 
 from ..config import SafetyConfig
+from . import rfcomm
 from .interface import ControllerInterface
 
 WRITE_TIMEOUT_S = 0.5
@@ -32,6 +34,12 @@ def list_ports() -> list[dict[str, str]]:
 
     return [{"device": p.device, "label": p.description if p.description not in (None, "n/a") else p.device}
             for p in comports() if not any(s in p.device for s in NOT_A_CONTROLLER)]
+
+
+def interface_ports() -> list[dict[str, str]]:
+    """What the interface can be on: the paired Bluetooth modules reached through their RFCOMM
+    channel (bt:<address>, macOS), then the serial ports."""
+    return rfcomm.modules() + list_ports()
 
 
 def parse_report(line: bytes) -> dict[str, str] | None:
@@ -55,6 +63,8 @@ class SerialInterface(ControllerInterface):
                  baud: int = 115200, opener: Callable[[str, int], Any] | None = None):
         super().__init__(device, safety, emit)
         self.baud = baud
+        if opener is None and device.startswith(rfcomm.PREFIX):  # stoppable while the module connects
+            opener = functools.partial(rfcomm.open_port, cancelled=self._stop.is_set)
         self._opener = opener or open_port
         self._port: Any = None
         self._rx = bytearray()
@@ -89,4 +99,8 @@ class SerialInterface(ControllerInterface):
     def close(self) -> None:
         port, self._port = self._port, None
         if port is not None:
+            try:  # frames still queued for a dead link: closing would wait for them to drain
+                port.reset_output_buffer()
+            except Exception:
+                pass
             port.close()

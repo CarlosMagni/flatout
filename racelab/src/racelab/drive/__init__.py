@@ -8,6 +8,6 @@ documented wire protocol over any serial port, so most hardware needs no Python 
 """
 
 from .interface import ControllerInterface
-from .serial import SerialInterface, list_ports
+from .serial import SerialInterface, interface_ports, list_ports
 
-__all__ = ["ControllerInterface", "SerialInterface", "list_ports"]
+__all__ = ["ControllerInterface", "SerialInterface", "interface_ports", "list_ports"]

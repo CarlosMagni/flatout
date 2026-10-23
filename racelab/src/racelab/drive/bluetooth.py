@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 
+from . import rfcomm
 from .serial import list_ports
 
 PIN = "1234"  # HC-05 default
@@ -47,13 +48,16 @@ def devices(seconds: int = INQUIRY_S) -> list[dict[str, str]]:
 
 
 def pair(address: str, name: str = "") -> str:
-    """Pair a serial module (PIN 1234) and return the serial port macOS creates for it."""
+    """Pair a serial module (PIN 1234) and return its port: bt:<address> where RaceLab opens its RFCOMM
+    channel itself (macOS with IOBluetooth), else the serial port macOS creates for it."""
     before = {p["device"] for p in list_ports()}
     try:
         _blueutil("--unpair", address, timeout=15)
     except RuntimeError:
         pass  # was not paired
     _blueutil("--pair", address, PIN, timeout=40)
+    if rfcomm.available():
+        return rfcomm.PREFIX + address.lower().replace(":", "-")
     key = name.replace(" ", "-").lower()
     end = time.monotonic() + PORT_WAIT_S
     while time.monotonic() < end:

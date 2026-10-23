@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ import pytest
 
 from racelab.config import SafetyConfig
 from racelab.cu.unit import RaceControlUnit
-from racelab.drive import SerialInterface, bluetooth
+from racelab.drive import SerialInterface, bluetooth, rfcomm
 from racelab.drive import interface as interface_mod
 from racelab.drive.serial import parse_report
 from racelab.events import BotSent, InterfaceState
@@ -239,13 +240,81 @@ def test_bluetooth_pairing_through_blueutil(monkeypatch):
 
     monkeypatch.setattr(bluetooth, "blueutil", lambda: "/fake/blueutil")
     monkeypatch.setattr(bluetooth.subprocess, "run", fake_run)
+    monkeypatch.setattr(rfcomm, "available", lambda: False)     # the /dev/cu. port macOS creates
     monkeypatch.setattr(bluetooth, "list_ports", lambda: list(ports))
     assert bluetooth.devices(1) == [{"address": "00-22-09-01-82-7a", "name": "racelab-wireless"}]
     assert bluetooth.pair("00-22-09-01-82-7a", "racelab-wireless") == "/dev/cu.racelab-wireless"
     assert calls[1:] == [["--unpair", "00-22-09-01-82-7a"], ["--pair", "00-22-09-01-82-7a", "1234"]]
+    monkeypatch.setattr(rfcomm, "available", lambda: True)      # RaceLab opens the RFCOMM channel itself
+    assert bluetooth.pair("00-22-09-01-82-7a", "racelab-wireless") == "bt:00-22-09-01-82-7a"
     monkeypatch.setattr(bluetooth, "blueutil", lambda: None)     # not macOS / not installed
     with pytest.raises(RuntimeError, match="blueutil"):
         bluetooth.devices(1)
+
+
+NO_WINDOWS_PIPES = pytest.mark.skipif(sys.platform == "win32", reason="non-blocking pipes (macOS only in use)")
+
+# a stand-in for the RFCOMM helper: the opening verdict, then an echo of what RaceLab writes
+FAKE_HELPER = """
+import os, sys, time
+if sys.argv[1] == "slow":      # a module that takes its time to connect
+    time.sleep(30)
+if sys.argv[1] == "off":
+    print("error Bluetooth: cannot open the module's serial channel (off, or out of range?)", flush=True)
+    sys.exit(1)
+os.write(1, b"ok\\npico sync=on\\n")
+while True:
+    data = os.read(0, 4096)
+    if not data or data.startswith(b"bye"):
+        break
+    os.write(1, data)
+"""
+
+
+@NO_WINDOWS_PIPES
+def test_rfcomm_port_relays_through_its_helper(monkeypatch, tmp_path):
+    script = tmp_path / "helper.py"
+    script.write_text(FAKE_HELPER)
+    monkeypatch.setattr(rfcomm, "_helper", lambda *args: [sys.executable, str(script), *args])
+    port = rfcomm.RfcommPort("00-22-09-01-82-7a")             # the 'ok' line is the helper's, not read back
+    got = bytearray()
+    assert wait_for(lambda: got.extend(port.read(4096)) or bytes(got) == b"pico sync=on\n")
+    port.write(b'"C000000000000$')
+    assert wait_for(lambda: got.extend(port.read(4096)) or bytes(got).endswith(b'"C000000000000$'))
+    port.write(b"bye")                                       # the helper ends: the link is down
+    with pytest.raises(OSError, match="link down"):
+        for _ in range(200):
+            port.read(4096)
+            time.sleep(0.01)
+    port.close()
+    with pytest.raises(OSError, match="out of range"):
+        rfcomm.RfcommPort("off")
+
+
+@NO_WINDOWS_PIPES
+def test_rfcomm_opening_stops_with_the_interface(monkeypatch, tmp_path):
+    """An interface stopped while its module connects does not wait for it: the helper is killed."""
+    script = tmp_path / "helper.py"
+    script.write_text(FAKE_HELPER)
+    monkeypatch.setattr(rfcomm, "_helper", lambda *args: [sys.executable, str(script), *args])
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    t = time.monotonic()
+    with pytest.raises(OSError, match="cancelled"):
+        rfcomm.RfcommPort("slow", stop.is_set)
+    assert time.monotonic() - t < 2.0
+
+
+def test_bt_devices_go_through_rfcomm(monkeypatch):
+    """bt:<address> is opened through RFCOMM, and never without the Bluetooth permission (macOS would kill RaceLab)."""
+    iface = SerialInterface("bt:00-22-09-01-82-7a", SafetyConfig(), lambda e: None)
+    assert iface._opener.func is rfcomm.open_port and iface._opener.keywords["cancelled"] == iface._stop.is_set
+    assert SerialInterface("/dev/cu.usbmodem1", SafetyConfig(), lambda e: None)._opener is not rfcomm.open_port
+    assert rfcomm.address_of("bt:00-22-09-01-82-7a") == "00-22-09-01-82-7a" and rfcomm.address_of("COM3") is None
+    monkeypatch.setattr(rfcomm, "available", lambda: False)
+    with pytest.raises(OSError, match="Bluetooth unavailable"):
+        rfcomm.open_port("bt:00-22-09-01-82-7a")
+    assert rfcomm.modules() == []
 
 
 # ------------------------------------------------------------ in the app

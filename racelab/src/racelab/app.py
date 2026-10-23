@@ -25,7 +25,7 @@ from .bots.profiles import PROFILE_LABELS, PROFILES
 from .config import Config, apply_connection_choice, save_overrides
 from .cu.firmware import FirmwareLibrary, ImageError, build_images, can_build, missing_images
 from .cu.link import CULink
-from .drive import ControllerInterface, SerialInterface, bluetooth, list_ports
+from .drive import ControllerInterface, SerialInterface, bluetooth, interface_ports
 from .events import (
     BUTTON_BRAKE,
     BUTTON_CODE,
@@ -1368,7 +1368,7 @@ class RaceLabApp:
 
     async def _op_interface_scan(self, args, client):
         try:
-            ports = await asyncio.get_running_loop().run_in_executor(None, list_ports)
+            ports = await asyncio.get_running_loop().run_in_executor(None, interface_ports)
         except Exception as e:  # pyserial missing or system error
             raise OpError(f"serial ports: {e}") from None
         return {"ports": ports, "current": self.cfg.interface.port or None,

@@ -83,7 +83,7 @@ is `hello.client`),
 | `console.trace` | `polls` (bool) | include the `?` polls in the raw-frame subscription |
 | `cu.scan` | `timeout?` (2..15 s, default 5) | `{devices: [{transport: ble\|serial, device, label}], errors: […]}` |
 | `cu.connect` | `transport: none\|ble\|serial\|sim`, `device?`, `stock?` | switch CU (outside a session): bots are stopped and handed back on the old one first; the choice is remembered |
-| `interface.scan` | — | serial ports a [controller interface](controller-interface.md) could be on, Bluetooth ones included: `{ports: [{device, label}], current, pairing}` (`pairing`: RaceLab can pair Bluetooth modules itself, macOS with blueutil) |
+| `interface.scan` | — | serial ports a [controller interface](controller-interface.md) could be on, Bluetooth ones included (on macOS, paired modules as `bt:<address>`, opened through RFCOMM): `{ports: [{device, label}], current, pairing}` (`pairing`: RaceLab can pair Bluetooth modules itself, macOS with blueutil) |
 | `interface.bt_scan` | — | classic Bluetooth modules in range not paired yet (~10 s): `{devices: [{address, name}]}` |
 | `interface.pair` | `address`, `name?` | pairs the module (PIN 1234, a stale pairing is dropped first), then uses its serial port as `interface.set` does |
 | `interface.set` | `port` (serial port, `""` = remove) | choose the controller interface, outside a session: only the interface restarts (the CU link carries on); next to a real CU, the bots go through it; the choice is remembered |

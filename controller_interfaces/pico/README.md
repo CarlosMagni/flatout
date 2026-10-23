@@ -134,14 +134,17 @@ Lines starting with `#` tune it live, from a serial terminal on the module's por
      [blueutil](https://github.com/toy/blueutil) (`brew install blueutil` once). macOS shows no
      *Connect* button for such a module.
    - **Elsewhere,** pair it in the system's Bluetooth settings (PIN `1234`, else `0000`).
+   - **On macOS, choose the `bt:` entry** ("… (Bluetooth)"), not `/dev/cu.<name>`: RaceLab then
+     opens the module's channel itself and reconnects it every time. The `/dev/cu.` port only
+     worked right after pairing (a macOS bug with these modules).
    - **LED fast while RaceLab has the port:** there is no Bluetooth connection. Pair again from
      RaceLab; the old pairing is dropped first.
    - **AT mode:** the Pico can talk to the module there. `AT+NAME=<name>` renames it, and
      `AT+UART?` gives its rate (any rate works, since `main.py` finds it).
 4. **RaceLab:** launch it from Terminal or RaceLab.app, which hold the Bluetooth permission.
    - Connect the CU as usual (System → Connection).
-   - Under *Controller interface*: *Search ports…* → *Use* on the module's port. For a module
-     not paired yet, use *Pair and use* under the Bluetooth modules in range.
+   - Under *Controller interface*: *Search ports…* → *Use* on the module's entry (`bt:…` on
+     macOS). For a module not paired yet, use *Pair and use* under the Bluetooth modules in range.
    - The chip turns green, the module's LED stays on, and the report line appears.
    - Bots show *Ready · controller interface*: turn on **With bots** and use a slot's fader.
 5. **First tests:** cars off the track or wheels in the air, a hand on the track's power.
