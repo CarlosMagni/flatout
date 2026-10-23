@@ -72,10 +72,10 @@ def make_interface(monkeypatch):
     monkeypatch.setattr(SerialInterface, "RETRY_S", 0.05)
     made = []
 
-    def make(port=None, **safety):
+    def make(port=None, device="fake-port", **safety):
         port = port or FakePort()
         events = []
-        iface = SerialInterface("fake-port", SafetyConfig(**safety), events.append, opener=port.open)
+        iface = SerialInterface(device, SafetyConfig(**safety), events.append, opener=port.open)
         iface.start()
         made.append(iface)
         return iface, port, events
@@ -194,6 +194,12 @@ def test_a_device_that_never_reports_is_not_watched(make_interface, monkeypatch)
     assert "lost" not in states(events) and port.opens == 1
 
 
+def test_a_vanished_device_node_is_lost(make_interface):
+    """macOS drops a Bluetooth port's /dev node with the link, while the open file still takes writes."""
+    iface, port, events = make_interface(device="/dev/racelab-test-no-such-port")
+    assert wait_for(lambda: "lost" in states(events))
+
+
 def test_missing_port_is_retried(make_interface):
     port = FakePort()
     port.broken = True
@@ -263,7 +269,8 @@ def test_app_drives_a_real_cu_through_the_interface(tmp_path, monkeypatch):
         app, client = await started(cfg)
         try:
             assert app.link_info["bots_supported"] is False          # this CU alone: no bots
-            assert (await op(client, "interface.set", port="/dev/cu.racelab-wireless"))["ok"]
+            # not a /dev path: the interface would find no such node there and call the port lost
+            assert (await op(client, "interface.set", port="fake-port"))["ok"]
             assert await wait_until(lambda: app.link_info["interface"] == "connected")
             assert app.link_info["bot_transport"] == "I" and app.mode == "advanced"
             assert app.link_info["state"] == "connected"               # the CU link carried on
