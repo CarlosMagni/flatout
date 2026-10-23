@@ -9,6 +9,7 @@
 | [protocol.md](protocol.md) | protocol / tool authors | CU serial and Bluetooth protocol |
 | [cu-firmware-versions.md](cu-firmware-versions.md) | firmware and app authors | what changed from V336 to V339, which versions take bots without flashing |
 | [bot-protocol.md](bot-protocol.md) | firmware and app authors | the `C` (stock CU) and `B` (bot module) commands for software drivers, and their safety rules |
+| [controller-interface.md](controller-interface.md) | hardware makers | bots on any CU through hardware on a controller socket: the wire protocol, building your own, the Python interface |
 | [hardware-test.md](hardware-test.md) | testers | the first field test: `C` command, camera, map autopilot, with go/no-go numbers ([français](fr/hardware-test.md)) |
 | [firmware/](../firmware/README.md) | firmware contributors | images and tags, building the bot image, the C reconstruction |
 

@@ -203,7 +203,7 @@ class BotManager:
         self.bots_supported = st.bots_supported
 
     def outage(self) -> None:
-        """The way to the cars came back after an outage outside the CU link (the Pico's port):
+        """The way to the cars came back after an outage outside the CU link (a controller interface):
         same as a reconnection, every bot restarts from throttle 0."""
         self._reconnected = True
 

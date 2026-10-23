@@ -151,90 +151,97 @@ export class SystemView {
     this.simBox = h("div.sim-box.hidden", {}, this.drop,
       h("p.note", { text: t("sys.drop_note") }));
     this.chooser = new ConnectChooser({ compact: true });
-    this.buildPico();
+    this.buildInterface();
     this.connPanel = panel(t("sys.connection"), [
       h("dl.kv-list", {}, ...Object.values(rows).map((r) => r.row)), this.simBox,
       h("div.eyebrow", { text: t("sys.change_cu"), style: { margin: "18px 0 10px" } }), this.chooser.el,
-      h("div.eyebrow", { text: t("sys.pico.eyebrow"), style: { margin: "18px 0 10px" } }), this.picoBox]);
+      h("div.eyebrow", { text: t("sys.iface.eyebrow"), style: { margin: "18px 0 10px" } }), this.ifaceBox]);
   }
 
-  // the Pico controller interface (tools/pico_controllers): its own serial port, next to the CU's
-  buildPico() {
-    this.picoChip = h("span.chip.hidden");
-    this.picoDevice = h("div.cx-desc");
-    this.picoResults = h("div.cx-results.hidden");
-    this.picoRemove = h("button.btn.ghost.sm.hidden", { type: "button", onclick: () => this.setPico("") }, t("sys.pico.remove"));
-    this.picoScan = h("button.btn", { type: "button", onclick: () => this.scanPico() }, t("connect.search_ports"));
-    this.picoBox = h("div.cx.compact", {},
+  // the controller interface (racelab/drive/, docs/controller-interface.md): hardware on a controller
+  // socket that plays the controllers, on its own serial port next to the CU's
+  buildInterface() {
+    this.ifaceChip = h("span.chip.hidden");
+    this.ifaceDevice = h("div.cx-desc");
+    this.ifaceReport = h("div.cx-desc.mono.faint.hidden");
+    this.ifaceResults = h("div.cx-results.hidden");
+    this.ifaceRemove = h("button.btn.ghost.sm.hidden", { type: "button", onclick: () => this.setInterface("") }, t("sys.iface.remove"));
+    this.ifaceScan = h("button.btn", { type: "button", onclick: () => this.scanInterface() }, t("connect.search_ports"));
+    this.ifaceBox = h("div.cx.compact", {},
       h("div.cx-list", {}, h("div.cx-row", {},
-        h("div.cx-text", {}, h("div.cx-title", {}, t("sys.pico.title"), this.picoChip),
-          h("div.cx-desc", { text: t("sys.pico.text") }), this.picoDevice),
-        h("div.cx-actions", {}, this.picoScan, this.picoRemove))),
-      this.picoResults);
+        h("div.cx-text", {}, h("div.cx-title", {}, t("sys.iface.title"), this.ifaceChip),
+          h("div.cx-desc", { text: t("sys.iface.text") }), this.ifaceDevice, this.ifaceReport),
+        h("div.cx-actions", {}, this.ifaceScan, this.ifaceRemove))),
+      this.ifaceResults);
   }
 
-  updatePico(link) {
-    const device = link.pico_device;
-    const state = device ? link.pico || "idle" : null;
-    toggle(this.picoChip, "hidden", !state);
+  updateInterface(link) {
+    const device = link.interface_device;
+    const state = device ? link.interface || "idle" : null;
+    toggle(this.ifaceChip, "hidden", !state);
     if (state) {
       const cls = `chip ${{ connected: "go", lost: "stop", connecting: "caution" }[state] || ""}`.trim();
-      if (this.picoChip.className !== cls) this.picoChip.className = cls;
-      setText(this.picoChip, t(`sys.pico.state_${state}`));
+      if (this.ifaceChip.className !== cls) this.ifaceChip.className = cls;
+      setText(this.ifaceChip, t(`sys.iface.state_${state}`));
     }
-    setText(this.picoDevice, device ? device + (link.pico_error ? ` · ${link.pico_error}` : "") : t("sys.pico.none"));
-    toggle(this.picoDevice, "mono", !!device);
-    toggle(this.picoRemove, "hidden", !device);
+    setText(this.ifaceDevice, device ? device + (link.interface_error ? ` · ${link.interface_error}` : "") : t("sys.iface.none"));
+    toggle(this.ifaceDevice, "mono", !!device);
+    toggle(this.ifaceRemove, "hidden", !device);
+    // what the device says about itself (its report line, key=value): shown as it comes
+    const info = link.interface_info || {};
+    const report = Object.entries(info).filter(([k]) => k !== "name").map(([k, v]) => `${k}=${v}`).join("  ");
+    setText(this.ifaceReport, report ? `${info.name ? info.name + ": " : ""}${report}` : "");
+    toggle(this.ifaceReport, "hidden", !report || state !== "connected");
   }
 
-  async scanPico() {
-    this.picoScan.disabled = true;
-    toggle(this.picoResults, "hidden", false);
-    this.picoResults.replaceChildren(h("p.faint", { text: t("sys.pico.scanning") }));
+  async scanInterface() {
+    this.ifaceScan.disabled = true;
+    toggle(this.ifaceResults, "hidden", false);
+    this.ifaceResults.replaceChildren(h("p.faint", { text: t("sys.iface.scanning") }));
     try {
-      const res = await request("pico.scan", {});
+      const res = await request("interface.scan", {});
       const bt = h("div.cx-results");
-      this.picoResults.replaceChildren(...(res.ports.length
+      this.ifaceResults.replaceChildren(...(res.ports.length
         ? res.ports.map((p) => h("div.cx-device", {},
           h("div", {}, h("div", { text: p.label }), h("div.mono.faint", { text: p.device })),
-          h("button.btn.primary.sm", { type: "button", onclick: () => this.setPico(p.device) }, t("sys.pico.use"))))
-        : [h("p.faint", { text: t(res.pairing ? "sys.pico.no_ports_pairing" : "sys.pico.no_ports") })]), bt);
+          h("button.btn.primary.sm", { type: "button", onclick: () => this.setInterface(p.device) }, t("sys.iface.use"))))
+        : [h("p.faint", { text: t(res.pairing ? "sys.iface.no_ports_pairing" : "sys.iface.no_ports") })]), bt);
       // modules in range not paired yet: RaceLab pairs them itself (macOS, blueutil)
       if (res.pairing) {
-        bt.replaceChildren(h("p.faint", { text: t("sys.pico.bt_scanning") }));
-        const found = await request("pico.bt_scan", {}, 45000);
+        bt.replaceChildren(h("p.faint", { text: t("sys.iface.bt_scanning") }));
+        const found = await request("interface.bt_scan", {}, 45000);
         bt.replaceChildren(...(found.devices.length
           ? found.devices.map((d) => h("div.cx-device", {},
             h("div", {}, h("div", { text: d.name }), h("div.mono.faint", { text: d.address })),
-            h("button.btn.primary.sm", { type: "button", onclick: (ev) => this.pairPico(d, ev.currentTarget) }, t("sys.pico.pair"))))
-          : [h("p.faint", { text: t("sys.pico.bt_none") })]));
+            h("button.btn.primary.sm", { type: "button", onclick: (ev) => this.pairInterface(d, ev.currentTarget) }, t("sys.iface.pair"))))
+          : [h("p.faint", { text: t("sys.iface.bt_none") })]));
       }
     } catch (e) {
       toast(e.message, "error", 5000);
     } finally {
-      this.picoScan.disabled = false;
+      this.ifaceScan.disabled = false;
     }
   }
 
-  async pairPico(device, button) {
+  async pairInterface(device, button) {
     button.disabled = true;
-    setText(button, t("sys.pico.pairing"));
+    setText(button, t("sys.iface.pairing"));
     try {
-      await request("pico.pair", { address: device.address, name: device.name }, 90000);
-      this.picoResults.replaceChildren();
-      toggle(this.picoResults, "hidden", true);
+      await request("interface.pair", { address: device.address, name: device.name }, 90000);
+      this.ifaceResults.replaceChildren();
+      toggle(this.ifaceResults, "hidden", true);
     } catch (e) {
       toast(e.message, "error", 6000);
       button.disabled = false;
-      setText(button, t("sys.pico.pair"));
+      setText(button, t("sys.iface.pair"));
     }
   }
 
-  async setPico(device) {
+  async setInterface(port) {
     try {
-      await run("pico.set", { device });
-      this.picoResults.replaceChildren();
-      toggle(this.picoResults, "hidden", true);
+      await run("interface.set", { port });
+      this.ifaceResults.replaceChildren();
+      toggle(this.ifaceResults, "hidden", true);
     } catch {
       /* toast already shown */
     }
@@ -257,7 +264,7 @@ export class SystemView {
     const bots = link.bots_supported;
     const botsCls = bots === true ? "chip go" : bots === false ? "chip caution" : "chip";
     if (this.botsChip.className !== botsCls) this.botsChip.className = botsCls;
-    const ready = { C: t("sys.bots_ready_stock"), B: t("sys.bots_ready_module"), P: t("sys.bots_ready_pico") }[link.bot_transport] || t("sys.bots_detected");
+    const ready = { C: t("sys.bots_ready_stock"), B: t("sys.bots_ready_module"), I: t("sys.bots_ready_iface") }[link.bot_transport] || t("sys.bots_detected");
     setText(this.botsChip, bots === true ? ready : bots === false ? t("sys.bots_stock") : t("sys.bots_unknown"));
 
     const rtt = link.rtt_ms;
@@ -273,7 +280,7 @@ export class SystemView {
     const sim = link.transport === "sim";
     toggle(this.simBox, "hidden", !sim);
     if (state) this.chooser.update(state);
-    this.updatePico(link);
+    this.updateInterface(link);
     this.drop.disabled = !online || link.state !== "connected";
   }
 

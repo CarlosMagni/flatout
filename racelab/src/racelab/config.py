@@ -55,9 +55,15 @@ class ConnectionConfig:
     # how software drivers reach the cars: "auto" = the stock C table on a V339 CU
     # (no custom firmware needed), else the B command of the bot module; "C" / "B" force one
     bot_transport: str = "auto"
-    # serial port of the Pico controller interface (tools/pico_controllers/, e.g. the HC-05's
-    # /dev/cu.HC-05): when set, the bots go through it on any CU; empty = none
-    pico: str = ""
+
+
+@dataclass
+class InterfaceConfig:
+    """A controller interface (docs/controller-interface.md): hardware on a controller socket that
+    plays the hand controllers, so the bots drive on any CU. Empty port = none, the CU drives them."""
+
+    port: str = ""  # its serial port: USB, USB-serial or Bluetooth serial (e.g. /dev/cu.racelab-wireless)
+    baud: int = 115200  # for a real UART; a USB or Bluetooth serial port ignores it
 
 
 @dataclass
@@ -133,6 +139,7 @@ def default_drivers() -> list[DriverConfig]:
 class Config:
     app: AppConfig = field(default_factory=AppConfig)
     connection: ConnectionConfig = field(default_factory=ConnectionConfig)
+    interface: InterfaceConfig = field(default_factory=InterfaceConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     race: RaceConfig = field(default_factory=RaceConfig)
     tower: TowerConfig = field(default_factory=TowerConfig)
@@ -145,7 +152,7 @@ class Config:
     # value is saved, never a command-line option
     connection_choice: dict[str, Any] | None = None
     mode_choice: str | None = None  # last mode chosen in the UI (same: never the command line)
-    pico_choice: str | None = None  # Pico port chosen in the UI ("" = removed), kept apart from the CU
+    interface_choice: str | None = None  # interface port chosen in the UI ("" = removed), apart from the CU
 
     @property
     def data_path(self) -> Path:
@@ -156,7 +163,7 @@ class Config:
         d.pop("source", None)
         d.pop("connection_choice", None)
         d.pop("mode_choice", None)
-        d.pop("pico_choice", None)
+        d.pop("interface_choice", None)
         return d
 
 
@@ -193,10 +200,10 @@ def _merge(cfg: Config, data: dict[str, Any]) -> None:
         elif key == "connection_choice":
             if value:
                 apply_connection_choice(cfg, value)
-        elif key == "pico_choice":
+        elif key in ("interface_choice", "pico_choice"):  # pico_choice: its first name, before 0.2
             if not isinstance(value, str):
-                raise ConfigError(f"invalid saved Pico port: {value!r}")
-            cfg.connection.pico = cfg.pico_choice = value
+                raise ConfigError(f"invalid saved interface port: {value!r}")
+            cfg.interface.port = cfg.interface_choice = value
         elif key == "mode_choice":
             if value not in ("classic", "advanced"):
                 raise ConfigError(f"invalid saved mode: {value!r}")
@@ -214,6 +221,8 @@ def validate(cfg: Config) -> None:
         raise ConfigError("[connection] transport: none | auto | ble | serial | sim")
     if cfg.connection.bot_transport not in ("auto", "C", "B"):
         raise ConfigError("[connection] bot_transport: auto | C | B")
+    if not 300 <= cfg.interface.baud <= 4_000_000:
+        raise ConfigError("[interface] baud: a serial rate, e.g. 115200")
     if not 0 <= cfg.safety.max_throttle <= 15:
         raise ConfigError("[safety] max_throttle must be between 0 and 15")
     if cfg.safety.heartbeat_ms < 100:
@@ -281,8 +290,8 @@ def save_overrides(cfg: Config) -> Path:
         "race": {"session": cfg.race.session},
         "bots": cfg.bots,
     }
-    if cfg.pico_choice is not None:
-        data["pico_choice"] = cfg.pico_choice
+    if cfg.interface_choice is not None:
+        data["interface_choice"] = cfg.interface_choice
     if cfg.connection_choice:
         data["connection_choice"] = cfg.connection_choice
     if cfg.mode_choice:

@@ -2,7 +2,8 @@
 # Bluetooth serial module (HC-05, classic Bluetooth SPP). MicroPython, copy as main.py on the Pico.
 # Wiring, socket and setup: README.md next to this file.
 #
-# Bluetooth side: the CU's own `C` frame (flatout docs/bot-protocol.md), one per line:
+# Bluetooth side: the controller-interface protocol (flatout docs/controller-interface.md), the CU's
+# own `C` frame, one per line:
 #     C <t0><l0> ... <t5><l5> <checksum>      optional leading `"`, ends with `$` or newline
 #   t: `0` = slot not driven (its real controller drives), `P` = throttle 0,
 #      `1`-`9` `:` `;` `<` `=` `>` `?` = throttle 1-15;  l: `1` = lane-change button held.

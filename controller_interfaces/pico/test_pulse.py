@@ -1,4 +1,4 @@
-"""Check main.py against the CU: python3 tools/pico_controllers/test_pulse.py [--emu | --capture FILE.csv]
+"""Check main.py against the CU: python3 controller_interfaces/pico/test_pulse.py [--emu | --capture FILE.csv]
 
 Without --emu: frame parser, then the controller words through a Python port of the V339 pulse
 ISRs (INT0 0x091C, TIMER0_COMP 0x081A, decoder 0x0A8E; ATmega16 at 8 MHz, Timer0 clk/64 = 8 us),
@@ -6,8 +6,8 @@ with the CU's 2.1 ms listening pause (ctl_window_start, once per rail cycle) dro
 offset: a word cut by the pause may be lost, never decoded wrong, and every slot still gets a
 word in every rail cycle (otherwise the CU falls back to the jack: throttle 0 for 75 ms).
 With --capture FILE.csv: decode a logic-analyzer capture of the Pico's GP15 (first bench step).
-With --emu: the same words on PD2 of the stock V339 image in the simavr emulator (firmware/emu,
-Docker), read back on the rails; skipped when the emulator is not available.
+With --emu: the same words on PD2 of the stock V339 image in the simavr emulator (firmware/emu/, a local
+prototype not in the repository yet), read back on the rails; skipped without it.
 """
 import sys
 from pathlib import Path

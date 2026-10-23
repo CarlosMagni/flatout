@@ -59,17 +59,19 @@ class LinkState:
     version: str | None = None  # ex. "5339"
     bots_supported: bool | None = None  # software drivers available (C or B); None = not probed yet
     error: str | None = None
-    bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | "P" (Pico) | None
+    bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | None
     bot_module: bool | None = None  # the bot firmware module answers B
 
 
 @dataclass(frozen=True)
-class PicoState:
-    """Port of the Pico controller interface (cu/pico.py), emitted on every transition."""
+class InterfaceState:
+    """A controller interface (racelab/drive/): on every transition, and on each feedback line."""
 
-    state: str  # "connecting" (never opened yet) | "connected" | "lost"
+    kind: str  # "serial", or a plugin's own kind
+    state: str  # "connecting" (never opened yet) | "connected" | "lost" | "closed"
     device: str | None = None
     error: str | None = None
+    info: dict = field(default_factory=dict)  # the device's last feedback (key=value), if it gives any
 
 
 @dataclass(frozen=True)

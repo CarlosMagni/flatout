@@ -19,8 +19,12 @@ connect_timeout = 20.0
 reconnect_delay = 1.5
 max_timeouts = 3         # missed replies in a row before declaring the link lost
 bot_transport = "auto"   # software drivers: auto (stock C table on a V338/V339 CU, else the bot module's B) | C | B
-pico = ""                # Pico controller interface (tools/pico_controllers/): its serial port, e.g. /dev/cu.HC-05;
-                         # when set, the bots go through it on any real CU (hardware 8 included). Also in System → Connection
+
+[interface]
+# a controller interface (docs/controller-interface.md): hardware on a controller socket that plays the
+# hand controllers, so the bots drive on any CU (hardware 8 included). Also chosen in System → Connection
+port = ""                # its serial port (USB, USB-serial, Bluetooth serial), e.g. /dev/cu.racelab-wireless
+baud = 115200            # for a real UART; USB and Bluetooth serial ports ignore it
 
 [safety]
 heartbeat_ms = 500           # resend of the active bots' throttle

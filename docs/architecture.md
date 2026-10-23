@@ -44,13 +44,21 @@ The UI calls them **Normal** and **With bots**.
 | Agent API (RL) | read-only | read + drive |
 | Raw console | no | yes (letters G/E/F/C/B are refused; the bots have their own commands) |
 
-The link picks the transport (`[connection] bot_transport`, default `auto`): `P` when a
-Pico controller interface is set (`[connection] pico`, any real CU), else `C` when
+The link picks the transport (`[connection] bot_transport`, default `auto`): `C` when
 the CU's version is `?338` or `?339`, otherwise `B` if the module answers, otherwise none.
-`P` sends the same `C` frame to the Pico's serial port through its own writer thread
-(`cu/pico.py`), so a stalled Bluetooth port never holds the polls or the E-STOP. It
-falls back the same way if the CU rejects `C`. Both feed the same per-slot model
+It falls back the same way if the CU rejects `C`. Both feed the same per-slot model
 (`set_bot` / lane / release), so nothing above the link knows which one is used.
+
+A **controller interface** (`racelab/drive/`, [controller-interface.md](controller-interface.md))
+takes the bots instead when one is set (`[interface] port`, next to a real CU): hardware on a
+controller socket that plays the controllers, for CUs with neither `C` nor `B`. The bot
+manager talks to a proxy, `app.drive`, which is the interface when there is one and the CU
+link otherwise; both answer the same calls (`set_bot`, `lane`, `estop`, `clear_estop`,
+`resume_bots`). `ControllerInterface` holds the bot model and the safety rules (E-STOP
+first, throttle 0 and a hold on a lost interface or CU link, the release frame on exit) and
+runs its own thread, never waiting on the CU's polls. A subclass only implements `open`,
+`send`, `poll` and `close`: `SerialInterface` speaks the documented wire protocol over any
+serial port, with the device's report lines as diagnostics and heartbeat.
 
 Hardware test bench (System tab, ops `link.bench` and `test.*`, see [api.md](api.md)): `cu/bench.py`
 holds the latency statistics; `CULink.bench()` samples the poll round trips the link makes anyway
