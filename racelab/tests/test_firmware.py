@@ -258,6 +258,23 @@ def test_flash_stock_to_bot_firmware(tmp_path):
     run(main())
 
 
+def test_flash_refused_on_another_hardware(tmp_path):
+    """The images are for hardware 5 (AVR): a hardware-8 CU (STM32, version 8339) never gets one."""
+    async def main():
+        app, client = await started(make_config(tmp_path))
+        try:
+            app.link_info["version"] = "8339"
+            image = app.firmware_lib.images()[0]
+            r = await op(client, "firmware.flash", image=image.id, confirm="FLASH")
+            assert r["ok"] is False and "hardware 8" in r["error"]
+            assert app.fw["state"] != "running"
+        finally:
+            await app.stop()
+            await client.close()
+
+    run(main())
+
+
 def test_abort_then_recovery(tmp_path):
     async def main():
         cfg = make_config(tmp_path)

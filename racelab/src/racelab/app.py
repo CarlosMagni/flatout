@@ -1025,6 +1025,10 @@ class RaceLabApp:
         recovery = bool(args.get("recovery", False))
         if not recovery and self.link_info["state"] != "connected":
             raise OpError("CU not connected (if it stayed in update mode: recovery mode)")
+        version = self.link_info.get("version") or ""
+        if not recovery and not version.startswith("5"):  # "8339": hardware 8 (STM32), firmware 339
+            raise OpError(f"this CU is hardware {version[:1] or '?'} (version {version or 'unknown'}): "
+                          "the images are for hardware 5 only")
         try:
             image = self.firmware_lib.get(str(args["image"]))
         except ImageError as e:

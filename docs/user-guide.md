@@ -277,6 +277,15 @@ against the virtual CU (`racelab --sim --stock-firmware`). The ops behind it
 
 ## Updating the CU firmware
 
+**Which CU do I have?** System → Connection shows its version, e.g. `5339`: the first digit
+is the hardware, the rest the firmware.
+
+| Version | Hardware | Firmware update from RaceLab | Bots |
+|---|---|---|---|
+| `5336`, `5337` | 5 (AVR) | yes: update to the stock `5339` | after the update |
+| `5338`, `5339` | 5 (AVR) | not needed | yes, as it is (`C`) |
+| `8339` and other `8…` | 8 (STM32, newer sets) | no: RaceLab's images are for hardware 5, and the app refuses to flash another one | through a [controller interface](controller-interface.md) |
+
 **Not needed for bots** on a V338/V339 CU. Panel **System → Advanced options** (folded
 by default; it opens by itself during an update or a recovery): the app lists the repository's `.HMF` images
 and the ones you imported (import button), then flashes the CU through the AppConnect or the serial
