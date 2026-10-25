@@ -521,6 +521,55 @@ def test_resume_does_not_press_during_an_ongoing_countdown():
     assert h.actions.of("press") == []
 
 
+def test_false_start_during_a_resume_is_shown_and_resume_works_again():
+    """A false start in the countdown of a resume: announced, still paused; resuming again clears the
+    CU's false-start lights with Start, even when the CU keeps showing them (no re-arm by itself)."""
+    h = race3(laps=10)
+    h.now = 12.0
+    h.engine.pause()
+    h.status(1, at=12.1)
+    h.now = 20.0
+    h.engine.resume()
+    h.status(2, at=20.5)
+    h.status(8, at=21.0)  # someone throttles during the countdown
+    assert h.engine.state == "paused" and h.named("false_start") == [{}]
+    assert h.snap()["session"]["false_start"] is True
+    h.status(9, at=21.5)
+    h.now = 25.0
+    h.actions.clear()
+    h.engine.resume()
+    assert h.actions.of("press") == [(BUTTON_START,)]          # clears the false start
+    assert h.snap()["session"]["false_start"] is False
+    h.tick(26.6)                                                # the CU still shows it: again
+    assert len(h.actions.of("press")) == 2
+    h.status(1, at=27.0)                                        # re-armed
+    h.tick(29.0)
+    assert len(h.actions.of("press")) == 3                      # countdown
+    for i, phase in enumerate(range(2, 7)):
+        h.status(phase, at=30.0 + i)
+    h.status(7, at=35.0)
+    assert h.engine.state == "running"
+
+
+def test_start_after_a_false_start_clears_the_cu_lights():
+    """The CU keeps showing a false start (phase 9) until Start: starting again presses it."""
+    h = Harness(2)
+    h.configure(type="race", laps=3)
+    h.now = 0.0
+    h.engine.start()
+    h.status(1, at=0.2)
+    h.status(2, at=1.0)
+    h.status(8, at=1.5)
+    h.status(9, at=2.0)
+    assert h.engine.state == "grid"
+    h.now = 10.0
+    h.actions.clear()
+    h.engine.start()
+    assert h.actions.of("press") == [(BUTTON_START,)]
+    h.tick(11.6)
+    assert len(h.actions.of("press")) == 2
+
+
 def test_pause_during_finishing_resumes_to_finishing():
     h = race3(laps=2)
     h.cross(0, B)

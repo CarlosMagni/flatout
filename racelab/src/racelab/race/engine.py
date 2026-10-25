@@ -44,6 +44,7 @@ RECENT_LAPS = 5
 ARMED_WAIT_S = 0.8  # phase 1 persisting: 2nd press (countdown)
 NO_REACTION_S = 1.5  # phase 0 persisting after a press: the CU did not react
 MIN_REPRESS_S = 2.0  # at most one re-press every 2 s
+FALSE_START = (8, 9)  # CU phases of a false start: its lights blink until Start is pressed
 
 
 def _signed_delta(a: int, b: int) -> int:
@@ -188,7 +189,7 @@ class RaceEngine:
             self._set_state("starting")
             self._countdown_t0 = self._last_press = now
             self._last_repress = None
-            if self._phase == 0:
+            if self._phase == 0 or self._phase in FALSE_START:
                 self._press_start(now)
         else:
             self._t_go = now
@@ -206,12 +207,13 @@ class RaceEngine:
         if self.state != "paused":
             raise ValueError("Cannot resume: the race is not paused")
         now = self._clock()
+        self._false_start = False
         if self._uses_lights():
             # the CU counts down, the return to racing happens at GO
             self._resuming = True
             self._countdown_t0 = self._last_press = now
             self._last_repress = None
-            if self._phase in (0, 1):
+            if self._phase in (0, 1) or self._phase in FALSE_START:
                 self._press_start(now)
         else:
             self._leave_pause(now)
@@ -457,15 +459,19 @@ class RaceEngine:
         elif self.state in ("running", "finishing"):
             if 1 <= phase <= 6 and not self._releasing:
                 self._enter_pause(t)  # someone pressed Start on the CU
+        elif self.state == "paused" and self._resuming and phase >= 8 and prev < 8:
+            self._false_start = True  # during the countdown of a resume: still paused, resume again
+            self._resuming = False
+            self._emit("false_start", {})
         elif self.state == "paused" and go:
             self._leave_pause(t)
 
     def _maintain_countdown(self, now: float) -> None:
-        """Press Start again if the CU did not react or stays armed (phase 1)."""
+        """Press Start again if the CU did not react, still shows a false start, or stays armed (phase 1)."""
         if self._last_repress is not None and now - self._last_repress < MIN_REPRESS_S:
             return
-        if self._phase == 0:
-            due = now - self._last_press >= NO_REACTION_S
+        if self._phase == 0 or self._phase in FALSE_START:
+            due = now - self._last_press >= NO_REACTION_S  # no reaction, or a false start still shown
         else:
             due = (
                 self._phase == 1
