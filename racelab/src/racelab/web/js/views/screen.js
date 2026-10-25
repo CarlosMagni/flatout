@@ -100,6 +100,7 @@ export class ScreenView {
   }
 
   fullscreen() {
+    document.activeElement?.blur?.(); // the button keeps no focus: Space is the session shortcut, not a click
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else document.documentElement.requestFullscreen?.().catch(() => {});
   }

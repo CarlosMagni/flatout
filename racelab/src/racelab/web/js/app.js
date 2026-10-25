@@ -140,6 +140,21 @@ document.addEventListener("keydown", (ev) => {
   else if (!ev.repeat) toast(t("estop.already"), "stop");
 });
 
+// Space = start / pause / resume the session, on the race page and on the big screen. Not on a
+// control (Space presses it) nor while typing; a press right after a change is a double tap.
+const SPACE_OPS = { grid: "race.start", running: "race.pause", paused: "race.resume" };
+const SPACE_QUIET_MS = 2000;
+let sessionState = null;
+let sessionChangedAt = -Infinity;
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== " " || ev.repeat || !(current instanceof RaceView || current instanceof ScreenView)) return;
+  if (ev.target.closest("input, textarea, select, button, a, summary, [tabindex], .fader") || document.querySelector(".drawer, .modal")) return;
+  const op = SPACE_OPS[store.state?.session.state];
+  if (!op) return;
+  ev.preventDefault();
+  if (performance.now() - sessionChangedAt >= SPACE_QUIET_MS) run(op).catch(() => {});
+});
+
 // external controllers: keyboard / gamepad drive a slot on the manual path
 // (advanced mode: the bot commands are what actually moves the car)
 hub.setSinks({
@@ -153,6 +168,11 @@ hub.start();
 // ------------------------------------------------------------ startup
 
 onState((state) => {
+  const sess = state?.session.state;
+  if (sess && sess !== sessionState) {
+    if (sessionState) sessionChangedAt = performance.now();
+    sessionState = sess;
+  }
   updateTopbar(state);
   if (state) hub.setPaused(!!state.estop);
   if (state) current?.update?.(state);

@@ -12,7 +12,6 @@ const LAP_MODES = new Set(["race", "rival", "elimination"]);
 const TIMED = new Set(["endurance", "qualifying"]);
 const QUICK_RACE_LAPS = 10;
 const QUICK_QUALIFYING_MIN = 5;
-const SPACE_QUIET_MS = 2000;
 
 export class RaceView {
   constructor(root) {
@@ -28,14 +27,10 @@ export class RaceView {
       this.track = null;
       this.mapBox.querySelector(".trackmap").replaceChildren();
     }));
-    this.transitionAt = -Infinity; // performance.now() of the last session state change
-    this.keyHandler = (ev) => this.onKey(ev);
-    document.addEventListener("keydown", this.keyHandler);
   }
 
   destroy() {
     this.off.forEach((f) => f());
-    document.removeEventListener("keydown", this.keyHandler);
   }
 
   build() {
@@ -123,7 +118,6 @@ export class RaceView {
 
   update(state) {
     const sess = state.session;
-    if (this.state && this.state.session.state !== sess.state) this.transitionAt = performance.now();
     this.state = state;
     this.updateBar(state, sess);
     this.updateTiming(state, sess);
@@ -214,19 +208,6 @@ export class RaceView {
     try {
       await run("race.setup", { settings });
     } catch { /* toast already shown */ }
-  }
-
-  onKey(ev) {
-    if (ev.key !== " " || ev.repeat) return;
-    if (ev.target.closest("input, textarea, select, button, a, summary, [tabindex], .fader") || document.querySelector(".drawer, .modal")) return;
-    const st = this.state?.session.state;
-    const op = { grid: "race.start", running: "race.pause", paused: "race.resume" }[st];
-    if (op) {
-      ev.preventDefault();
-      // a second press right after a change (start, pause...) is a double tap, not a new order
-      if (performance.now() - this.transitionAt < SPACE_QUIET_MS) return;
-      run(op).catch(() => {});
-    }
   }
 
   // ------------------------------------------------------------ timing
