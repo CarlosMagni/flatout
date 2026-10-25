@@ -185,8 +185,9 @@ class RaceEngine:
 ### Session types (`race/modes.py`)
 
 `SessionSettings` (dataclass, serialisable): `type`, `laps`, `duration_s`,
-`elim_every`, `episode_laps`, `rival_slot`, `rival_margin_pct`, `fuel`,
-`title`. `SESSION_TYPES`: metadata for the UI (label, description,
+`elim_every`, `episode_laps`, `rival_slot`, `rival_margin_pct`, `title`.
+Fuel is not one: the CU's fuel switch sets it, and nothing on the serial line
+can change it (the status reports it, `cu.fuel_mode`). `SESSION_TYPES`: metadata for the UI (label, description,
 `advanced_only`, `uses_lights`, relevant parameters).
 
 | type | UI name | lights | end | ranking |

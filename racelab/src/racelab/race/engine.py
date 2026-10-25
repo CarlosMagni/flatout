@@ -488,7 +488,7 @@ class RaceEngine:
             known = slot in self._cars
             before = self._fuel[slot]
             self._fuel[slot] = fuel
-            if known and self.settings.fuel and before is not None and before > low >= fuel:
+            if known and self._mode & FUEL_MODE and before is not None and before > low >= fuel:
                 self._emit("fuel_low", {"slot": slot, "fuel": fuel})
             if pit != self._pit[slot]:
                 self._pit[slot] = pit

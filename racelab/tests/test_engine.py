@@ -1081,13 +1081,13 @@ def test_fuel_pit_events_and_snapshot():
     assert h.named("fuel_low")[-1] == {"slot": 1, "fuel": 2}
 
 
-def test_fuel_low_is_muted_when_session_fuel_is_off_and_for_unknown_slots():
+def test_fuel_low_is_muted_when_the_cu_fuel_switch_is_off_and_for_unknown_slots():
+    """Fuel is the CU's switch, not a session setting: switched off, no fuel alert."""
     h = Harness(1)
-    h.configure(type="practice", fuel=False)
-    h.status(0, at=1.0, fuel=(10,) + (15,) * 7)
-    h.status(0, at=2.0, fuel=(1,) + (15,) * 7)
-    assert h.named("fuel_low") == []
     h.configure(type="practice")
+    h.status(0, at=1.0, fuel=(10,) + (15,) * 7, mode=PIT_LANE_MODE)
+    h.status(0, at=2.0, fuel=(1,) + (15,) * 7, mode=PIT_LANE_MODE)
+    assert h.named("fuel_low") == []
     h.status(0, at=3.0, fuel=(10, 15, 15, 15, 15, 15, 15, 15))
     h.status(0, at=4.0, fuel=(10, 1, 15, 15, 15, 15, 15, 15))  # slot 1: no driver
     assert h.named("fuel_low") == []
@@ -1411,7 +1411,7 @@ def test_settings_defaults_roundtrip_and_unknown_keys():
     s = SessionSettings()
     assert s.to_dict() == {
         "type": "practice", "laps": 20, "duration_s": None, "elim_every": 3, "episode_laps": 5,
-        "rival_slot": None, "rival_margin_pct": 3.0, "fuel": True, "title": "",
+        "rival_slot": None, "rival_margin_pct": 3.0, "title": "",
     }  # fmt: skip
     again = SessionSettings.from_dict({**s.to_dict(), "type": "race", "laps": 12, "bogus": 1})
     assert (again.type, again.laps) == ("race", 12)
@@ -1442,7 +1442,6 @@ def test_settings_defaults_roundtrip_and_unknown_keys():
         {"rival_slot": -1},
         {"rival_margin_pct": -21},
         {"rival_margin_pct": 80},
-        {"fuel": "yes"},
         {"title": "x" * 81},
         {"title": 3},
     ],

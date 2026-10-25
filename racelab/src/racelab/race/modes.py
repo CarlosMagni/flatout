@@ -25,28 +25,28 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Lights start; first to complete the set number of laps wins.",
         "advanced_only": False,
         "uses_lights": True,
-        "params": ["laps", "fuel"],
+        "params": ["laps"],
     },
     "endurance": {
         "label": "Endurance",
         "description": "Fixed-duration race; most laps wins.",
         "advanced_only": False,
         "uses_lights": True,
-        "params": ["duration_s", "fuel"],
+        "params": ["duration_s"],
     },
     "elimination": {
         "label": "Elimination",
         "description": "The last car is eliminated every N laps of the leader; the last one on track wins.",
         "advanced_only": False,
         "uses_lights": True,
-        "params": ["elim_every", "fuel"],
+        "params": ["elim_every"],
     },
     "rival": {
         "label": "Beat the bot",
         "description": "Race against a car driven by the software.",
         "advanced_only": True,
         "uses_lights": True,
-        "params": ["laps", "rival_slot", "rival_margin_pct", "fuel"],
+        "params": ["laps", "rival_slot", "rival_margin_pct"],
     },
     "training": {
         "label": "AI training",
@@ -89,8 +89,7 @@ class SessionSettings:
     episode_laps: int = 5
     rival_slot: int | None = None
     rival_margin_pct: float = 3.0
-    fuel: bool = True
-    title: str = ""
+    title: str = ""  # fuel is not a session setting: the fuel switch on the CU sets it
 
     def validate(self) -> None:
         """Raise ValueError if a setting is out of range."""
@@ -108,8 +107,6 @@ class SessionSettings:
         # negative margin = the bot aims faster than the rival
         if not (_is_number(self.rival_margin_pct) and -20 <= self.rival_margin_pct <= 50):
             raise ValueError("Rival margin: must be a percentage between -20 and 50")
-        if not isinstance(self.fuel, bool):
-            raise ValueError("Fuel: must be true or false")
         if not isinstance(self.title, str) or len(self.title) > 80:
             raise ValueError("Title: must be text of at most 80 characters")
 

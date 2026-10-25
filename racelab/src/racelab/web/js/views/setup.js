@@ -145,7 +145,6 @@ export class SetupView {
       episode_laps: clamp(last.episode_laps ?? 5, 1, 100),
       rival_slot: last.rival_slot ?? null,
       rival_margin_pct: clamp(last.rival_margin_pct ?? 3, -20, 30),
-      fuel: last.fuel ?? true,
       title: "",
     };
 
@@ -250,19 +249,13 @@ export class SetupView {
     this.marginStepper = Stepper({ label: t("setup.margin"), value: this.v.rival_margin_pct, min: -20, max: 30, onChange: (x) => this.setValue("rival_margin_pct", x) });
     f.margin = group(t("setup.margin"), h("div.control", {}, this.marginStepper.el, h("span.dim", { text: t("setup.unit_margin") })));
 
-    // fuel
-    const fuel = Toggle(this.v.fuel, (on) => { this.v.fuel = on; }, t("setup.fuel"));
-    f.fuel = h("div.switch-row", {}, fuel.el,
-      h("span.switch-text", { onclick: () => fuel.input.click() },
-        h("span", { text: t("setup.fuel") }),
-        h("span.dim", { text: t("setup.fuel_desc") })));
 
     // title
     this.titleInput = h("input.input", { type: "text", maxlength: 80, autocomplete: "off" });
     this.titleInput.addEventListener("input", () => { this.v.title = this.titleInput.value; });
     f.title = h("label.field.wide", {}, h("span", { text: t("setup.title_field") }), this.titleInput);
 
-    this.fieldsBox = h("div.params", {}, f.laps, f.duration, f.elim, f.episode, f.rival, f.margin, f.fuel, f.title);
+    this.fieldsBox = h("div.params", {}, f.laps, f.duration, f.elim, f.episode, f.rival, f.margin, f.title);
 
     this.hint = h("p.setup-hint");
     this.busyText = h("span");
@@ -276,6 +269,8 @@ export class SetupView {
         this.busyBox,
         this.fieldsBox,
         this.hint,
+        // fuel is not a setting: the CU's fuel switch decides, nothing on the serial line can change it
+        h("p.setup-hint.dim", { text: t("setup.fuel_cu") }),
         h("div.setup-actions", {}, this.submit, this.submitNote)));
     this.paintDuration();
   }
@@ -311,7 +306,6 @@ export class SetupView {
     toggle(f.episode, "hidden", !params.has("episode_laps"));
     toggle(f.rival, "hidden", !params.has("rival_slot"));
     toggle(f.margin, "hidden", !params.has("rival_margin_pct"));
-    toggle(f.fuel, "hidden", !params.has("fuel"));
     if (params.has("duration_s")) {
       if (this.durStepper.value !== this.durationMinutes()) this.durStepper.set(this.durationMinutes());
       this.paintDuration();
@@ -373,7 +367,6 @@ export class SetupView {
       episode_laps: v.episode_laps,
       rival_slot: this.enabledSlots().includes(v.rival_slot) ? v.rival_slot : (this.enabledSlots()[0] ?? null),
       rival_margin_pct: v.rival_margin_pct,
-      fuel: v.fuel,
       // empty: send the automatic title in the UI language (the server's default is English)
       title: v.title.trim() || this.titleInput.placeholder,
     };

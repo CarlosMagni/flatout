@@ -104,7 +104,8 @@ All the configuration is documented in
 - Pit stops: only the **Race brain** profile goes to refuel by itself (see
   [Race brain](#race-brain)). With the other profiles, in the CU's fuel mode a bot
   runs dry (flagged as out of fuel; bring it in with Lane at the pit entrance,
-  or turn off the CU's fuel mode for long sessions with bots).
+  or turn off the CU's fuel mode for long sessions with bots). The fuel mode is the fuel
+  switch on the CU (off, on, real): RaceLab cannot change it and follows it.
 - `STOP` (or `Esc`): emergency stop, throttle 0 on every bot. It works from every
   screen, also with a drawer or a dialog open (`Esc` closes it and stops). It can
   only be cleared with the mouse; `Esc` while it is on only says so.
