@@ -32,7 +32,7 @@ LIST_TIMEOUT_S = 10.0
 
 
 def available() -> bool:
-    """True on macOS with pyobjc's IOBluetooth (a RaceLab dependency there), once whatever launched
+    """True on macOS with pyobjc's IOBluetooth (the bt-serial extra), once whatever launched
     RaceLab holds the Bluetooth permission (asking never touches IOBluetooth itself)."""
     if sys.platform != "darwin":
         return False

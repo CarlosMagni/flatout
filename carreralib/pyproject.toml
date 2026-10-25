@@ -18,7 +18,6 @@ license-files = ["LICENSE"]
 dependencies = [
     "bleak >= 3.0",
     "pyserial >= 3.5",
-    "windows-curses; platform_system=='Windows'"
 ]
 requires-python = ">= 3.10"
 classifiers = [
@@ -36,6 +35,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+[project.optional-dependencies]
+cli = ["windows-curses; platform_system=='Windows'"]  # the console race display (python -m carreralib)
 
 [project.urls]
 Homepage = "https://github.com/tkem/carreralib/"

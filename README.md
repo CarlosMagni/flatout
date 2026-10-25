@@ -114,10 +114,14 @@ From a terminal:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e carreralib/ -e "racelab[dev]"     # Windows: .venv\Scripts\pip
+.venv/bin/pip install -e carreralib/ -e "racelab[mpc,bt-serial]"  # Windows: .venv\Scripts\pip
 .venv/bin/racelab --sim                                     # Windows: .venv\Scripts\racelab --sim
                                                             # virtual CU, opens http://localhost:8130
 ```
+
+Optional parts, installed by the installer when they can be (RaceLab runs without them, and
+the feature then says it is unavailable): `mpc` (numpy: the race brain's predictive pilot),
+`bt-serial` (Bluetooth serial modules on macOS), `dev` (the tests).
 
 ## Firmware
 
@@ -185,8 +189,8 @@ API can be used on their own (see [`docs/architecture.md`](docs/architecture.md)
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Tests run on macOS, Windows and Linux
-(GitHub Actions).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Tests run on Linux, and the installation is checked
+on Windows and macOS with the newest Python (GitHub Actions).
 
 ## License and credits
 

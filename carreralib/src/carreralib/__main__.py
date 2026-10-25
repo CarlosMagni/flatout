@@ -1,12 +1,16 @@
 import argparse
 import contextlib
-import curses
 import errno
 import logging
 import sys
 import time
 
 from . import ControlUnit
+
+try:
+    import curses
+except ImportError:  # Windows: curses comes from the optional windows-curses package
+    sys.exit("The console display needs curses: pip install windows-curses")
 
 
 def posgetter(driver):

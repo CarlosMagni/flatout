@@ -36,8 +36,12 @@ It creates a virtual environment in `.venv` and installs `carreralib/` and
 ```bash
 cd carrera-app
 python3 -m venv .venv
-.venv/bin/pip install -e carreralib/ -e "racelab[dev]"     # Windows: .venv\Scripts\pip
+.venv/bin/pip install -e carreralib/ -e "racelab[mpc,bt-serial]"  # Windows: .venv\Scripts\pip
 ```
+
+Optional parts, installed by the installer when they can be (RaceLab runs without them, and
+the feature then says it is unavailable): `mpc` (numpy: the race brain's predictive pilot),
+`bt-serial` (Bluetooth serial modules on macOS), `dev` (the tests).
 
 ## Running
 

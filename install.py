@@ -26,6 +26,10 @@ ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 TOOLS = ROOT / "tools"
 WINDOWS = sys.platform == "win32"
+OPTIONAL = {  # racelab/pyproject.toml extras: one that cannot be installed is skipped, RaceLab runs without it
+    "mpc": "the race brain's predictive pilot",
+    "bt-serial": "Bluetooth serial modules on macOS",
+}
 
 
 def say(text: str = "") -> None:
@@ -158,6 +162,11 @@ def main() -> int:
         pip(py, "--upgrade", "pip")
         pip(py, "-e", str(ROOT / "carreralib"), "-e", str(ROOT / "racelab"))
         say("  installed")
+        for extra, what in OPTIONAL.items():
+            try:
+                pip(py, "-e", f"{ROOT / 'racelab'}[{extra}]")
+            except subprocess.CalledProcessError:
+                say(f"  skipped: {what} (could not be installed; RaceLab runs without it)")
         if args.no_launcher:
             return 0
         say("\n3/3 Launch shortcut")

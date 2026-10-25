@@ -25,11 +25,12 @@ dependencies = [
     "aiohttp >= 3.9",
     "bleak >= 3.0",
     "pyserial >= 3.5",
-    "pyobjc-framework-IOBluetooth; sys_platform == 'darwin'",  # a Bluetooth serial module's RFCOMM channel (drive/rfcomm.py)
-    "numpy",            # the predictive (MPC) pilot of the race brain
 ]
 
 [project.optional-dependencies]
+# optional parts: RaceLab runs without them, and the feature then says it is unavailable
+mpc = ["numpy"]                                                         # the race brain's predictive pilot
+bt-serial = ["pyobjc-framework-IOBluetooth; sys_platform == 'darwin'"]  # Bluetooth serial modules on macOS (drive/rfcomm.py)
 dev = ["pytest >= 8"]
 rl = ["gymnasium >= 1.0", "numpy"]
 
