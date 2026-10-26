@@ -88,6 +88,33 @@ def test_rest_state_meta_and_errors(tmp_path):
     run(main())
 
 
+def test_stop_never_waits_behind_a_slow_command(tmp_path, monkeypatch):
+    """STOP sent right behind a command that waits, on the same WebSocket, is answered first: every
+    op that waits is answered in the background (a console command to a silent CU waits 3 s)."""
+    from racelab import app as app_mod
+
+    monkeypatch.setattr(app_mod, "scan_devices", lambda timeout: time.sleep(1.5) or {"devices": [], "errors": []})
+
+    async def main():
+        app, client = await started(make_config(tmp_path))
+        try:
+            ws = await client.ws_connect("/ws")
+            assert (await ws.receive_json())["type"] == "hello"
+            await ws.send_json({"id": 1, "op": "cu.scan"})
+            await ws.send_json({"id": 2, "op": "estop"})
+            replies = []
+            while len(replies) < 2:
+                msg = await ws.receive_json()
+                if msg["type"] == "reply":
+                    replies.append(msg["id"])
+            assert replies == [2, 1]
+            await ws.close()
+        finally:
+            await stopped(app, client)
+
+    run(main())
+
+
 def test_ws_agent_drives_a_car_and_deadman(tmp_path):
     async def main():
         app, client = await started(make_config(tmp_path))

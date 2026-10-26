@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import logging
 import subprocess
 import time
@@ -78,10 +79,6 @@ FIRMWARE_SAFE_OPS = frozenset({
     "track.set", "track.positions", "track.clear", "connector.set", "connector.clear",
 })
 FIRMWARE_CONFIRM = "FLASH"
-# These ops wait (up to a few seconds): the WebSocket answers them in the background so that
-# STOP, sent by the same client meanwhile, is never queued behind them.
-LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback", "interface.bt_scan",
-                      "interface.pair", "update.check", "update.apply"})
 UPDATE_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)  # offline, no git, GitHub down...
 UPDATE_EVERY_S = 6 * 3600  # an app left running checks again this often
 CONNECTOR_LIMITS = {"name": 40, "ui_url": 300, "status": 80}
@@ -1256,6 +1253,13 @@ class RaceLabApp:
         "test.handback": lambda self, a, c: self.hwtest.handback(a),
         "test.report": _op_test_report,
     }
+
+
+# The ops that wait (seconds): the WebSocket answers them in the background so that STOP, sent by
+# the same client meanwhile, is never queued behind them. Every coroutine op is one, so a new one
+# cannot be forgotten; the hardware tests return their awaitable from plain lambdas.
+LONG_OPS = frozenset({"test.pulse", "test.lane", "test.handback"}) | frozenset(
+    name for name, fn in RaceLabApp._ops.items() if inspect.iscoroutinefunction(fn))
 
 
 def _describe(e: Exception) -> str:
