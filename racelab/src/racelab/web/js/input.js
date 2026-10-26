@@ -9,6 +9,8 @@
 // edge-triggered; the gamepad E-STOP needs a deliberate hold. Nothing is sent
 // while a player is off, and a gamepad that goes away zeroes its throttle.
 
+import { readJson, writeJson } from "./store.js";
+
 const STORAGE_KEY = "racelab.controllers";
 const SEND_MIN_MS = 90;      // at most ~11 sends per second per player
 const KEEPALIVE_MS = 500;    // re-send while held
@@ -35,18 +37,14 @@ function defaults(player) {
 }
 
 export function readControllers() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(raw)) {
-      return [0, 1].map((i) => ({ ...defaults(i), ...(raw[i] || {}), slot: Number(raw[i]?.slot ?? i), type: raw[i]?.type === "gamepad" ? "gamepad" : "keyboard" }));
-    }
-  } catch { /* fresh start */ }
-  return [defaults(0), defaults(1)];
+  const raw = readJson(STORAGE_KEY);
+  if (Array.isArray(raw)) {
+    return [0, 1].map((i) => ({ ...defaults(i), ...(raw[i] || {}), slot: Number(raw[i]?.slot ?? i), type: raw[i]?.type === "gamepad" ? "gamepad" : "keyboard" }));
+  }
+  return [defaults(0), defaults(1)]; // fresh start
 }
 
-export function writeControllers(list) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch { /* storage unavailable */ }
-}
+export const writeControllers = (list) => writeJson(STORAGE_KEY, list);
 
 export function keyLabel(code) {
   const pretty = { ArrowUp: "\u2191", ArrowDown: "\u2193", ArrowLeft: "\u2190", ArrowRight: "\u2192", Space: "\u2423", Enter: "\u23ce", ShiftLeft: "\u21e7", ControlLeft: "Ctrl", AltLeft: "Alt", Backspace: "\u232b", Tab: "\u21b9" };

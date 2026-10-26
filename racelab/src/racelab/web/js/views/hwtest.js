@@ -1,12 +1,11 @@
 // "Hardware test" panel (System screen): a bench to validate the stock CU's C command on a real track.
 // Every timing and every limit lives on the server (test.* and link.bench ops): this file only
 // asks, shows what came back, and records the tester's yes / no answers in a report.
-import { h, setText, toggle } from "../dom.js";
+import { IDLE_STATES, h, setText, toggle } from "../dom.js";
 import { lang, t } from "../i18n.js";
-import { onEvent, request, store } from "../store.js";
+import { onEvent, readJson, request, store, writeJson } from "../store.js";
 import { Stepper, confirmModal, copyText, estopButton, run, toast } from "../ui/components.js";
 
-const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 const LONG = 12000; // request timeout of the ops that wait for the server
 const BAR = 24;
 // indicative verdict: a C frame must reach the CU within 750 ms, the heartbeat is 300 ms
@@ -22,26 +21,20 @@ const MOVE_IDS = ["pulse", "lane", "handback"]; // steps that really move a car
 // Results survive leaving and coming back to the System screen, and a page reload (localStorage:
 // results and notes only; the storage may be unavailable, then they just last until the reload).
 function loadKept() {
-  try {
-    const d = JSON.parse(localStorage.getItem(STORE_KEY));
-    const results = {};
-    for (const id of STEP_IDS) {
-      const r = d?.results?.[id];
-      if (r && typeof r === "object" && ["pass", "fail", "wait", "aborted", "refused"].includes(r.status)) results[id] = r;
-    }
-    return { results, notes: typeof d?.notes === "string" ? d.notes : "" };
-  } catch {
-    return { results: {}, notes: "" };
+  const d = readJson(STORE_KEY);
+  const results = {};
+  for (const id of STEP_IDS) {
+    const r = d?.results?.[id];
+    if (r && typeof r === "object" && ["pass", "fail", "wait", "aborted", "refused"].includes(r.status)) results[id] = r;
   }
+  return { results, notes: typeof d?.notes === "string" ? d.notes : "" };
 }
 const kept = loadKept();
 const memory = { results: kept.results, notes: kept.notes, saved: null, settings: { slot: 0, throttle: 3, ms: 1000, n: 100 } };
 
 function keep() {
-  try {
-    if (!Object.keys(memory.results).length && !memory.notes.trim()) localStorage.removeItem(STORE_KEY);
-    else localStorage.setItem(STORE_KEY, JSON.stringify({ results: memory.results, notes: memory.notes }));
-  } catch { /* storage unavailable */ }
+  const empty = !Object.keys(memory.results).length && !memory.notes.trim();
+  writeJson(STORE_KEY, empty ? null : { results: memory.results, notes: memory.notes });
 }
 
 const laneMs = (ms) => Math.max(ms, LANE_MIN_MS);

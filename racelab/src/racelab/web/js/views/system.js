@@ -1,14 +1,13 @@
 // System screen: CU link, CU buttons, garage (car programming), raw console,
 // API and log.
-import { h, inkOn, setText, toggle, wallTime } from "../dom.js";
+import { IDLE_STATES, h, inkOn, setText, toggle, wallTime } from "../dom.js";
 import { LANGUAGES, lang, locale, logText, setLang, t } from "../i18n.js";
-import { onEvent, request, store } from "../store.js";
+import { onEvent, readJson, request, store, writeJson } from "../store.js";
 import { Segmented, Stepper, Toggle, confirmModal, copyText, fillConnectors, panel, run, toast } from "../ui/components.js";
 import { FirmwarePanel } from "./firmware.js";
 import { ConnectChooser } from "./connect.js";
 import { HwTestPanel } from "./hwtest.js";
 
-const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 const TRANSPORT = {
   ble: t("sys.transport.ble"), serial: t("sys.transport.serial"), sim: t("sys.transport.sim"), none: t("sys.transport.none"),
 };
@@ -61,13 +60,6 @@ asyncio.run(main())`;
 function kv(label) {
   const value = h("dd");
   return { row: h("div.kv", {}, h("dt", { text: label }), value), value };
-}
-
-function readGarage() {
-  try { return JSON.parse(localStorage.getItem(GARAGE_KEY)) || {}; } catch { return {}; }
-}
-function writeGarage(data) {
-  try { localStorage.setItem(GARAGE_KEY, JSON.stringify(data)); } catch { /* storage unavailable */ }
 }
 
 // readable display of a raw frame (control bytes escaped)
@@ -306,7 +298,7 @@ export class SystemView {
 
   buildGarage() {
     this.garageRows = [];
-    const memory = readGarage();
+    const memory = readJson(GARAGE_KEY, {});
     const rows = h("div.g-rows");
     for (let slot = 0; slot < 6; slot++) {
       const row = new GarageRow(slot, memory[slot] || {}, (r) => this.program(r));
@@ -328,9 +320,9 @@ export class SystemView {
     try {
       await run("car.program", { slot: row.slot, ...payload }, t("garage.programmed", { n: row.slot + 1 }));
       row.saved();
-      const memory = readGarage();
+      const memory = readJson(GARAGE_KEY, {});
       memory[row.slot] = row.values();
-      writeGarage(memory);
+      writeJson(GARAGE_KEY, memory);
     } catch { /* toast already shown */ }
     this.sig = null;
     if (store.state) this.update(store.state);

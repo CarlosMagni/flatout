@@ -1,26 +1,18 @@
 // Settings screen: the car setup through the CU keys (moved from System) and
 // the external controllers (keyboard / gamepad) that drive a car on the
 // manual path, exactly like the fader.
-import { h, setText } from "../dom.js";
+import { IDLE_STATES, h, setText } from "../dom.js";
 import { t } from "../i18n.js";
-import { botsUnavailable, store } from "../store.js";
+import { botsUnavailable, readJson, store, writeJson } from "../store.js";
 import { Segmented, Toggle, panel, run, toast } from "../ui/components.js";
 import { firstPressedButton, hub, keyLabel, padList, readControllers, writeControllers } from "../input.js";
 
-const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 const LIVE_KEY = "racelab.liveprogram";
 const LIVE_FIELDS = [
   { id: "speed", def: 10 },  // factory levels (manual): speed 10, brake 10, tank 7
   { id: "brake", def: 10 },
   { id: "fuel", def: 7 },
 ];
-
-function readLive() {
-  try { return JSON.parse(localStorage.getItem(LIVE_KEY)) || {}; } catch { return {}; }
-}
-function writeLive(data) {
-  try { localStorage.setItem(LIVE_KEY, JSON.stringify(data)); } catch { /* storage unavailable */ }
-}
 
 export class SettingsView {
   constructor(root) {
@@ -52,7 +44,7 @@ export class SettingsView {
   // ------------------------------------------------------------ car setup (CU keys)
 
   buildCarSetup() {
-    const mem = readLive();
+    const mem = readJson(LIVE_KEY, {});
     this.liveSliders = {};
     this.liveRecal = {};
     this.liveDirty = false;
@@ -76,7 +68,7 @@ export class SettingsView {
     this.liveGo = h("button.btn.primary", { type: "button", disabled: true, onclick: () => this.liveProgram() }, t("live.go"));
     this.liveHint = h("p.live-hint");
     const sync = () => {
-      const mem2 = readLive();
+      const mem2 = readJson(LIVE_KEY, {});
       const dirty = LIVE_FIELDS.filter((f) => Number(this.liveSliders[f.id].value) !== (mem2[f.id] ?? f.def));
       this.liveDirty = dirty.length > 0;
       this.liveGo.disabled = !this.liveDirty;
@@ -111,9 +103,9 @@ export class SettingsView {
       return;
     }
     if (confirm) {
-      const mem = readLive();
+      const mem = readJson(LIVE_KEY, {});
       mem[field] = Number(r.sel.value);
-      writeLive(mem);
+      writeJson(LIVE_KEY, mem);
       toast(t("live.recal_done", { field: t(`garage.${field}`), level: r.sel.value }));
     }
     r.edit.hidden = true;
@@ -125,7 +117,7 @@ export class SettingsView {
   }
 
   async liveProgram() {
-    const mem = readLive();
+    const mem = readJson(LIVE_KEY, {});
     const dirty = LIVE_FIELDS.filter((f) => Number(this.liveSliders[f.id].value) !== (mem[f.id] ?? f.def));
     if (!dirty.length) return;
     this.liveGo.disabled = true;
@@ -136,7 +128,7 @@ export class SettingsView {
         await run("car.program_live", { field: f.id, level, current },
           t("live.done", { field: t(`garage.${f.id}`), from: current, to: level }));
         mem[f.id] = level;
-        writeLive(mem);
+        writeJson(LIVE_KEY, mem);
       } catch { break; /* toast already shown */ }
     }
     this.liveSync();

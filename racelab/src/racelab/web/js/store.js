@@ -43,16 +43,39 @@ function notify() {
   }
 }
 
-export function connect() {
-  const params = new URLSearchParams(location.search);
-  let token = params.get("token") || "";
+// ------------------------------------------------------------ browser storage + API token
+
+// localStorage as JSON. The storage can be unavailable (private browsing): reads then give the
+// fallback and writes are lost. `writeJson(key, null)` forgets the key.
+export function readJson(key, fallback = null) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+}
+export function writeJson(key, value) {
   try {
-    if (token) localStorage.setItem("racelab.token", token);
-    else token = localStorage.getItem("racelab.token") || "";
-  } catch { /* storage unavailable (private browsing) */ }
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* storage unavailable */ }
+}
+
+// Optional API token: a `?token=` in the URL is remembered for the next loads. The only place it
+// is read; REST calls send it in a header (authHeaders), never in the URL.
+let apiToken = null;
+function token() {
+  if (apiToken == null) {
+    apiToken = new URLSearchParams(location.search).get("token") || "";
+    try {
+      if (apiToken) localStorage.setItem("racelab.token", apiToken);
+      else apiToken = localStorage.getItem("racelab.token") || "";
+    } catch { /* storage unavailable (private browsing) */ }
+  }
+  return apiToken;
+}
+export const authHeaders = () => (token() ? { Authorization: `Bearer ${token()}` } : {});
+
+export function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = new URLSearchParams({ state_hz: "10" });
-  if (token) q.set("token", token);
+  if (token()) q.set("token", token());
   ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
 
   ws.onopen = () => { retry = 0; };
@@ -123,11 +146,33 @@ export function subscribe(args) {
 }
 
 // read helpers
-export const isAdvanced = () => store.state?.mode === "advanced";
+export const isAdvanced = () => (store.state?.mode ?? store.meta?.mode) === "advanced";
 export const driverOf = (slot) => store.meta?.drivers?.find((d) => d.slot === slot);
 // Labels the server also sends: the dictionary wins, the server text is the fallback.
 export const sessionLabel = (type) => tOr(`session.${type}.label`, store.meta?.session_types?.[type]?.label) || type || t("session.fallback");
 export const sessionDescription = (type) => tOr(`session.${type}.description`, store.meta?.session_types?.[type]?.description) || "";
+// Session-type facts sent by the server (modes.py SESSION_TYPES): the views never name a type.
+export const sessionInfo = (type) => store.meta?.session_types?.[type];
+// ranked by fastest lap (practice, qualifying, training) rather than by laps then time
+export const rankedByBestLap = (type) => sessionInfo(type)?.ranking === "best_lap";
+
+// The main counter of a session, the same for every view (they only choose the words):
+//   idle       no session
+//   lap        the lap the leader is on, out of `of` laps (null when there is no lap target:
+//              elimination). Completed laps + 1 while racing, the completed count once finished:
+//              the same convention for every lap-counted type, and an elimination happens at the
+//              end of the lap shown
+//   remaining  `seconds` left of a timed session
+//   elapsed    `seconds` since the start (free practice, training: nothing to count down to)
+export function sessionCounter(sess) {
+  if (sess.state === "idle") return { kind: "idle" };
+  if (sess.laps || sessionInfo(sess.type)?.ends_on === "last_car") {
+    const lap = (sess.leader_lap || 0) + (sess.state === "finished" ? 0 : 1);
+    return { kind: "lap", lap: Math.max(1, sess.laps ? Math.min(lap, sess.laps) : lap), of: sess.laps || null };
+  }
+  if (sess.duration_s != null) return { kind: "remaining", seconds: sess.remaining_s ?? sess.duration_s };
+  return { kind: "elapsed", seconds: sess.elapsed_s };
+}
 // why bots cannot be turned on right now (null = they can), in the UI language;
 // the server only says whether and roughly why (advanced_unavailable)
 export function botsUnavailable(state) {

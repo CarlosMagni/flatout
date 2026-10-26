@@ -2,11 +2,9 @@
 // Everything is sized on the screen height; F = fullscreen.
 import { STATE_LABEL, clock, gap, h, inkOn, lapTime, setText, toggle } from "../dom.js";
 import { t } from "../i18n.js";
-import { onEvent, sessionLabel, store } from "../store.js";
-import { estopButton, run } from "../ui/components.js";
+import { onEvent, rankedByBestLap, sessionCounter, sessionLabel, store } from "../store.js";
+import { FuelGauge, estopButton, run } from "../ui/components.js";
 
-const LAP_TYPES = new Set(["race", "rival"]);
-const TIMED = new Set(["endurance", "qualifying"]);
 const MAX_ROWS = 8;
 
 export class ScreenView {
@@ -124,22 +122,22 @@ export class ScreenView {
     setText(this.state, sess.false_start ? t("state.false_start") : STATE_LABEL[sess.state] || "");
     this.state.className = `bs-state ${sess.false_start ? "stop" : sess.state}`;
 
-    // main counter: leader lap, remaining time or elapsed time
-    if (LAP_TYPES.has(sess.type) && sess.laps) {
-      const lap = Math.min(Math.max((sess.leader_lap || 0) + (sess.state === "finished" ? 0 : 1), 1), sess.laps);
-      this.counter.replaceChildren(String(lap), h("span", { text: `/${sess.laps}` }));
+    // main counter: leader lap, remaining time or elapsed time (the same rules as the race view)
+    const counter = sessionCounter(sess);
+    if (counter.kind === "lap") {
+      this.counter.replaceChildren(String(counter.lap), ...(counter.of ? [h("span", { text: `/${counter.of}` })] : []));
       setText(this.counterLabel, t("screen.lap"));
-    } else if (TIMED.has(sess.type) || sess.duration_s) {
-      setText(this.counter, clock(sess.remaining_s ?? sess.duration_s));
+    } else if (counter.kind === "remaining") {
+      setText(this.counter, clock(counter.seconds));
       setText(this.counterLabel, t("screen.remaining"));
-    } else if (sess.state !== "idle") {
-      setText(this.counter, String((sess.leader_lap || 0)));
-      setText(this.counterLabel, t("screen.laps"));
+    } else if (counter.kind === "elapsed") {
+      setText(this.counter, clock(counter.seconds));
+      setText(this.counterLabel, t("screen.elapsed"));
     } else {
       setText(this.counter, "");
       setText(this.counterLabel, "");
     }
-    setText(this.clock, sess.state === "idle" ? "" : clock(sess.elapsed_s));
+    setText(this.clock, counter.kind === "idle" || counter.kind === "elapsed" ? "" : clock(sess.elapsed_s)); // elapsed: the counter is the clock
     this.paintLights(this.lightsSmall, state.cu);
 
     // start procedure, false start, checkered flag: shown big in the center. A finished (or reset)
@@ -190,9 +188,10 @@ export class ScreenView {
       r = {
         pos: h("div.bs-pos"), no: h("div.bs-no"), name: h("div.bs-name"), tag: h("div.bs-tag"),
         laps: h("div.bs-laps"), last: h("div.bs-last"), gap: h("div.bs-gap"),
-        fuel: h("div.bs-fuel", {}, Array.from({ length: 15 }, () => h("i"))),
+        fuel: FuelGauge(),
       };
-      r.el = h("div.bs-row", {}, r.pos, r.no, h("div.bs-who", {}, r.name, r.tag), r.laps, r.last, r.gap, r.fuel);
+      r.fuel.el.classList.add("bs-fuel");
+      r.el = h("div.bs-row", {}, r.pos, r.no, h("div.bs-who", {}, r.name, r.tag), r.laps, r.last, r.gap, r.fuel.el);
       this.rows.set(car.slot, r);
     }
     r.el.style.setProperty("--car", car.color);
@@ -209,13 +208,9 @@ export class ScreenView {
     setText(r.last, lapTime(car.last_ms));
     toggle(r.last, "sb", car.last_sb);
     toggle(r.last, "pb", car.last_pb && !car.last_sb);
-    const best = sess.type === "practice" || sess.type === "qualifying" || sess.type === "training";
-    setText(r.gap, car.position === 1 ? (best ? lapTime(car.best_ms) : "") : gap(car.gap_ms, car.gap_laps));
-    toggle(r.fuel, "hidden", !fuelShown || car.fuel == null);
-    const v = car.fuel ?? 0;
-    [...r.fuel.children].forEach((seg, i) => toggle(seg, "on", i < v));
-    toggle(r.fuel, "low", v <= 5);
-    toggle(r.fuel, "crit", v <= 3);
+    setText(r.gap, car.position === 1 ? (rankedByBestLap(sess.type) ? lapTime(car.best_ms) : "") : gap(car.gap_ms, car.gap_laps));
+    toggle(r.fuel.el, "hidden", !fuelShown || car.fuel == null);
+    r.fuel.update(car.fuel, false); // the tag column already says PIT
     return r.el;
   }
 

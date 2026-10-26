@@ -91,6 +91,9 @@ export function inkOn(hex) {
   return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#0b0c0e" : "#ffffff";
 }
 
+// session states with no session in progress: settings can be edited, the CU is free
+export const IDLE_STATES = new Set(["idle", "grid", "finished"]);
+
 // the language is fixed per page load, so these maps are built once
 export const STATE_LABEL = {
   idle: t("state.idle"),

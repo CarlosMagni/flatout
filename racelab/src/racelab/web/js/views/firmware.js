@@ -1,11 +1,10 @@
 // "CU firmware" panel (System screen): .HMF image choice, import, explicit
 // confirmation, flash progress, recovery mode.
-import { clock, h, setText, toggle } from "../dom.js";
+import { IDLE_STATES, clock, h, setText, toggle } from "../dom.js";
 import { t, tOr } from "../i18n.js";
-import { request, store } from "../store.js";
+import { authHeaders, request, store } from "../store.js";
 import { confirmModal, openDrawer, run, toast } from "../ui/components.js";
 
-const IDLE_STATES = new Set(["idle", "grid", "finished"]);
 // the server knows images by SHA-256: its verdict, in the UI language when we have it
 const warningOf = (img) => (img.issue ? tOr(`fw.issue.${img.issue}`, img.warning) : img.warning);
 const STAGES = {
@@ -19,15 +18,6 @@ const STAGES = {
 const SECONDS_PER_LINE = { ble: 0.16, serial: 0.06, sim: 0.03 };
 // The server words its link errors in English: a link lost around a firmware update mentions "update".
 const UPDATE_MODE_ERROR = /update/i;
-
-function authHeaders() {
-  try {
-    const token = localStorage.getItem("racelab.token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch {
-    return {};
-  }
-}
 
 function kib(bytes) {
   return t("fmt.kib", { n: Math.round(bytes / 1024) });

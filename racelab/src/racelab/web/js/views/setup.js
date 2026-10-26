@@ -1,12 +1,10 @@
 // Session screen: pick a type, set its parameters, put it on the grid, then
 // manage the drivers (name, color, car).
-import { STATE_LABEL, h, inkOn, setText, toggle } from "../dom.js";
+import { IDLE_STATES, STATE_LABEL, h, inkOn, setText, toggle } from "../dom.js";
 import { t } from "../i18n.js";
-import { refreshMeta, sessionDescription, sessionLabel, store } from "../store.js";
+import { isAdvanced, refreshMeta, sessionDescription, sessionLabel, store } from "../store.js";
 import { Segmented, Stepper, Toggle, run } from "../ui/components.js";
 
-const IDLE_STATES = new Set(["idle", "grid", "finished"]);
-const DURATION_REQUIRED = new Set(["qualifying", "endurance"]);
 const DEFAULT_MINUTES = { practice: 10, qualifying: 5, endurance: 30 };
 const SAVE_DELAY_MS = 400;
 const NAME_MAX = 24;
@@ -30,9 +28,9 @@ const PALETTE = [
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const laps = (n) => t("unit.laps", { n });
-const isAdvanced = () => (store.state?.mode ?? store.meta?.mode) === "advanced";
 
-// mirror of the server's format_duration(): 90 -> "1 min 30 s"
+// client-side port of the server's format_duration(): 90 -> "1 min 30 s" (the placeholders and hints
+// follow the steppers live, so they cannot ask the server)
 function formatDuration(seconds) {
   const total = Math.round(seconds);
   const hours = Math.floor(total / 3600);
@@ -41,13 +39,16 @@ function formatDuration(seconds) {
   return [hours && `${hours} h`, minutes && `${minutes} min`, secs && `${secs} s`].filter(Boolean).join(" ") || "0 s";
 }
 
-// mirror of SessionSettings.default_title() (the server builds the real title)
-function defaultTitle(key, label, v, durationS) {
+// SessionSettings.default_title() in the UI language (the server builds the real title); which part
+// of the settings the detail shows comes from the type's metadata
+function defaultTitle(type, v, durationS) {
+  const params = type.params || [];
   let detail = "";
-  if (key === "race" || key === "rival") detail = laps(v.laps);
-  else if (durationS != null && (key === "practice" || key === "qualifying" || key === "endurance")) detail = formatDuration(durationS);
-  else if (key === "elimination") detail = v.elim_every === 1 ? t("setup.title_detail.every_lap") : t("setup.title_detail.every_n_laps", { n: v.elim_every });
-  else if (key === "training") detail = t("setup.title_detail.episodes", { n: v.episode_laps });
+  if (type.ends_on === "laps") detail = laps(v.laps);
+  else if (type.ends_on === "duration" && durationS != null) detail = formatDuration(durationS);
+  else if (params.includes("elim_every")) detail = v.elim_every === 1 ? t("setup.title_detail.every_lap") : t("setup.title_detail.every_n_laps", { n: v.elim_every });
+  else if (params.includes("episode_laps")) detail = t("setup.title_detail.episodes", { n: v.episode_laps });
+  const label = sessionLabel(type.key);
   return detail ? `${label} · ${detail}` : label;
 }
 
@@ -281,8 +282,7 @@ export class SetupView {
   }
 
   paintDuration() {
-    const key = this.v.type;
-    const required = DURATION_REQUIRED.has(key);
+    const required = !!this.currentType()?.duration_required;
     const fixed = required || this.v.limited;
     this.durMode.set(this.v.limited ? "fixed" : "free");
     this.durMode.buttons.forEach((b) => b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false"));
@@ -310,13 +310,13 @@ export class SetupView {
       if (this.durStepper.value !== this.durationMinutes()) this.durStepper.set(this.durationMinutes());
       this.paintDuration();
     }
-    this.titleInput.placeholder = defaultTitle(type.key, sessionLabel(type.key), this.v, this.durationSeconds(type));
+    this.titleInput.placeholder = defaultTitle(type, this.v, this.durationSeconds(type));
     setText(this.hint, this.hintText(type));
   }
 
   durationSeconds(type) {
     if (!(type.params || []).includes("duration_s")) return null;
-    if (!DURATION_REQUIRED.has(type.key) && !this.v.limited) return null;
+    if (!type.duration_required && !this.v.limited) return null;
     return this.durationMinutes() * 60;
   }
 

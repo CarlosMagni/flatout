@@ -3,13 +3,11 @@ import {
   GATE_LABEL, STATE_CHIP, STATE_LABEL, clock, gap, h, inkOn, lapTime, s, setText, toggle, wallTime,
 } from "../dom.js";
 import { logText, t, tOr } from "../i18n.js";
-import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionLabel, store } from "../store.js";
+import { botsUnavailable, onEvent, profileLabel as profileKindLabel, request, sessionCounter, sessionInfo, sessionLabel, store } from "../store.js";
 import { FuelGauge, Fader, fillConnectors, Lights, Segmented, Spark, Stepper, Toggle, confirmModal, openDrawer, run, toast } from "../ui/components.js";
 import { hub } from "../input.js";
 import { ConnectChooser } from "./connect.js";
 
-const LAP_MODES = new Set(["race", "rival", "elimination"]);
-const TIMED = new Set(["endurance", "qualifying"]);
 const QUICK_RACE_LAPS = 10;
 const QUICK_QUALIFYING_MIN = 5;
 
@@ -127,7 +125,7 @@ export class RaceView {
   }
 
   updateBar(state, sess) {
-    const type = store.meta?.session_types?.[sess.type];
+    const type = sessionInfo(sess.type);
     setText(this.typeLabel, sess.state === "idle" ? "RaceLab" : sessionLabel(sess.type));
     setText(this.title, sess.state === "idle" ? t("race.idle_title") : sess.title);
     const shorted = (state.cu?.phase ?? 0) >= 10;
@@ -138,27 +136,22 @@ export class RaceView {
     this.shortBanner.hidden = !shorted;
 
     const running = state.cars.filter((c) => c.enabled && !c.eliminated).length;
-    setText(this.subInfo, sess.type === "elimination" && sess.state !== "idle" ? t("race.on_track", { n: running }) : "");
+    setText(this.subInfo, type?.ends_on === "last_car" && sess.state !== "idle" ? t("race.on_track", { n: running }) : "");
 
-    let value = "—", label = "";
-    let showClock = true;
-    if (sess.state === "idle") {
-      value = "—"; label = t("race.lap");
-    } else if (LAP_MODES.has(sess.type) && sess.laps && sess.type !== "elimination") {
-      const lap = Math.min((sess.leader_lap || 0) + (sess.state === "finished" ? 0 : 1), sess.laps);
-      this.counterValue.replaceChildren(String(Math.max(lap, sess.state === "grid" ? 0 : 1)), h("small", { text: `/${sess.laps}` }));
-      label = sess.state === "finishing" || sess.state === "finished" ? t("race.finish") : t("race.lap");
-      value = null;
-    } else if (sess.type === "elimination") {
-      value = String((sess.leader_lap || 0) + (sess.state === "finished" ? 0 : 1)); label = t("race.lap");
-    } else if (TIMED.has(sess.type) || sess.duration_s) {
-      value = clock(sess.remaining_s ?? sess.duration_s); label = t("race.remaining");
-    } else {
-      value = clock(sess.elapsed_s); label = t("race.elapsed"); showClock = false;
+    const counter = sessionCounter(sess);
+    let value = "—", label = t("race.lap");
+    switch (counter.kind) {
+      case "lap":
+        this.counterValue.replaceChildren(String(counter.lap), ...(counter.of ? [h("small", { text: `/${counter.of}` })] : []));
+        label = counter.of && (sess.state === "finishing" || sess.state === "finished") ? t("race.finish") : t("race.lap");
+        value = null;
+        break;
+      case "remaining": value = clock(counter.seconds); label = t("race.remaining"); break;
+      case "elapsed": value = clock(counter.seconds); label = t("race.elapsed"); break;
     }
     if (value !== null) setText(this.counterValue, value);
     setText(this.counterLabel, label);
-    toggle(this.clockBox, "hidden", !showClock);
+    toggle(this.clockBox, "hidden", counter.kind === "elapsed"); // the counter is the clock already
     setText(this.clockValue, clock(sess.elapsed_s));
     this.lights.update(state.cu, sess.state);
     // lights are only useful for a lights-start session, or if the CU lights them itself

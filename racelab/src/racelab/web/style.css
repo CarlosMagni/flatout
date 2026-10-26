@@ -882,11 +882,13 @@ body.bigscreen { background: #000; overflow: hidden; }
 .bs-last.pb { color: #3ddc84; }
 .bs-last.sb { color: #d29bff; }
 .bs-gap { text-align: right; font-size: min(calc(var(--rowh) * .34), 3vw); font-weight: 600; color: #a7aab1; }
-.bs-fuel { display: grid; grid-template-columns: repeat(15, 1fr); gap: .3vw; height: calc(var(--rowh) * .22); }
-.bs-fuel i { background: #24262b; border-radius: .3vh; }
-.bs-fuel i.on { background: #d8d8d8; }
-.bs-fuel.low i.on { background: #ffb340; }
-.bs-fuel.crit i.on { background: #ff453a; }
+/* the shared FuelGauge, scaled to the screen: the tag column already says PIT */
+.bs-fuel .pit-tag { display: none; }
+.bs-fuel .fuel-bar { width: 100%; height: calc(var(--rowh) * .22); gap: .3vw; }
+.bs-fuel .fuel-bar i { background: #24262b; border-radius: .3vh; }
+.bs-fuel .fuel-bar i.on { background: #d8d8d8; }
+.bs-fuel .fuel-bar.low i.on { background: #ffb340; }
+.bs-fuel .fuel-bar.crit i.on { background: #ff453a; }
 
 .bs-empty { display: grid; place-content: center; text-align: center; font-size: 6vh; font-weight: 700; }
 .bs-empty-sub { margin-top: 1.5vh; font-size: 3vh; font-weight: 500; color: #8a8d94; }

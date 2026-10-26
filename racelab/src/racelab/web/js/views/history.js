@@ -2,10 +2,9 @@
 // (standings + lap time chart).
 import { clock, dateTime, gap, h, inkOn, lapTime, s, setText } from "../dom.js";
 import { driverName, t } from "../i18n.js";
-import { request, sessionLabel, store } from "../store.js";
+import { authHeaders, rankedByBestLap, request, sessionLabel, store } from "../store.js";
 import { toast } from "../ui/components.js";
 
-const BEST_LAP_TYPES = new Set(["practice", "qualifying", "training"]);
 const FALLBACK_COLORS = ["#e5383b", "#2f80ed", "#f2c94c", "#27ae60", "#f2994a", "#e0e0e0", "#9b51e0", "#828282"];
 
 // ------------------------------------------------------------ utilities
@@ -34,16 +33,6 @@ const typeLabel = sessionLabel;
 
 function driverInfo(slot) {
   return store.meta?.drivers?.find((d) => d.slot === slot);
-}
-
-// Optional API token (same source as store.js), always in a header, never in the URL.
-function authHeaders() {
-  try {
-    const token = localStorage.getItem("racelab.token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  } catch {
-    return {};
-  }
 }
 
 // `sessions.get {id}` cannot go through the WebSocket: the `id` argument would overwrite
@@ -312,7 +301,7 @@ function normalize(doc, id) {
 
   // standings
   let cars;
-  const bestMode = BEST_LAP_TYPES.has(type);
+  const bestMode = rankedByBestLap(type);
   if (Array.isArray(results?.classification) && results.classification.length) {
     cars = results.classification.map((c) => ({ ...c }));
   } else {
