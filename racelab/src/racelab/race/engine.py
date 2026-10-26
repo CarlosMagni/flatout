@@ -45,6 +45,7 @@ ARMED_WAIT_S = 0.8  # phase 1 persisting: 2nd press (countdown)
 NO_REACTION_S = 1.5  # phase 0 persisting after a press: the CU did not react
 MIN_REPRESS_S = 2.0  # at most one re-press every 2 s
 FALSE_START = (8, 9)  # CU phases of a false start: its lights blink until Start is pressed
+# (10, 11: the short-circuit show of a hardware-8 CU, track power cut for a few seconds)
 
 
 def _signed_delta(a: int, b: int) -> int:
@@ -449,8 +450,9 @@ class RaceEngine:
             # the CU's short-circuit protection: track power cut for a few seconds,
             # beeping with all lights blinking (phases 10..11)
             self._emit("short_circuit", {"phase": phase})
+        false_start = phase in FALSE_START and prev not in FALSE_START
         if self.state == "starting":
-            if phase >= 8 and prev < 8:
+            if false_start:
                 self._false_start = True
                 self._emit("false_start", {})
                 self._set_state("grid")
@@ -459,7 +461,7 @@ class RaceEngine:
         elif self.state in ("running", "finishing"):
             if 1 <= phase <= 6 and not self._releasing:
                 self._enter_pause(t)  # someone pressed Start on the CU
-        elif self.state == "paused" and self._resuming and phase >= 8 and prev < 8:
+        elif self.state == "paused" and self._resuming and false_start:
             self._false_start = True  # during the countdown of a resume: still paused, resume again
             self._resuming = False
             self._emit("false_start", {})

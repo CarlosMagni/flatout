@@ -147,7 +147,8 @@ export class ScreenView {
     const starting = sess.state === "starting"
       || (state.cu.phase >= 1 && state.cu.phase <= 7 && !["running", "finished", "idle"].includes(sess.state));
     let banner = "", bannerKind = "";
-    if (sess.false_start || state.cu.phase >= 8) { banner = t("state.false_start"); bannerKind = "stop"; }
+    if (state.cu.phase >= 10) { banner = t("state.short_circuit"); bannerKind = "stop"; } // the CU cut the track
+    else if (sess.false_start || state.cu.phase >= 8) { banner = t("state.false_start"); bannerKind = "stop"; }
     else if (sess.state === "finishing") { banner = t("state.finishing"); bannerKind = "checkered"; }
     else if (sess.state === "paused") { banner = t("state.paused"); bannerKind = "caution"; }
     banner = banner.toUpperCase();

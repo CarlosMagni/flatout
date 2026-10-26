@@ -551,6 +551,19 @@ def test_false_start_during_a_resume_is_shown_and_resume_works_again():
     assert h.engine.state == "running"
 
 
+def test_a_short_circuit_in_the_countdown_is_not_a_false_start():
+    """Phases 10-11 are the CU's short-circuit show (hardware 8), not a false start (8-9)."""
+    h = Harness(2)
+    h.configure(type="race", laps=3)
+    h.now = 0.0
+    h.engine.start()
+    h.status(1, at=0.2)
+    h.status(2, at=1.0)
+    h.status(10, at=1.5)
+    assert h.engine.state == "starting" and h.named("false_start") == []
+    assert h.named("short_circuit") == [{"phase": 10}]
+
+
 def test_start_after_a_false_start_clears_the_cu_lights():
     """The CU keeps showing a false start (phase 9) until Start: starting again presses it."""
     h = Harness(2)
