@@ -58,7 +58,9 @@ REBOOT_WAIT_S = 3.0  # after the last line, before looking for the rebooted CU
 
 
 class LinkLost(Exception):
-    pass
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code  # LinkState.error_code
 
 
 class FirmwareFlashed(Exception):
@@ -334,10 +336,10 @@ class CULink:
             if self._target[slot] is not None:
                 self._target[slot] = 0
 
-    def _set_state(self, state: str, error: str | None = None) -> None:
+    def _set_state(self, state: str, error: str | None = None, error_code: str | None = None) -> None:
         self.state = state
         self._emit(LinkState(state, self._transport, self._device, self.version,
-                             self.bots_supported, error, self.bot_transport, self.bot_module))
+                             self.bots_supported, error, self.bot_transport, self.bot_module, error_code))
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -372,7 +374,7 @@ class CULink:
                     if any(t is not None for t in self._target):
                         self._holds.add("reconnect")
                     self._sent = [_UNKNOWN] * 6
-                self._set_state("lost", str(e))
+                self._set_state("lost", str(e), getattr(e, "code", None))
             except Exception:
                 logger.exception("unexpected error in the CU link")
                 self._set_state("lost", "internal error (see the log)")
@@ -390,7 +392,8 @@ class CULink:
         try:
             self.version = cu.version()
         except (CommandRejected, CUTimeoutError) as e:
-            raise LinkLost("the CU does not give its version (powered off, or stuck in update mode?)") from e
+            raise LinkLost("the CU does not give its version (powered off, or stuck in update mode?)",
+                           "no_version") from e
         try:
             module = cu.probe_bots()
         except CUTimeoutError:

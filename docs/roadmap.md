@@ -119,6 +119,6 @@ per lap; the manager's safety gates (STOP, dead-man, link, lights) stay in front
 | MPC pilot | `racelab/src/racelab/bots/mpc.py` |
 | pilot benchmark (virtual CU) | `racelab/bench_pilots.py` |
 | research lab (its own sim, PPO, MPC) | [CarlosMagni/slot-ai](https://github.com/CarlosMagni/slot-ai), private |
-| hardware test, connector cards, Origin/Host guard | `racelab/src/racelab/app.py`, `cu/bench.py`, `api/server.py`, `web/js/views/hwtest.js` |
+| hardware test, connector cards, Origin/Host guard | `racelab/src/racelab/app.py`, `hwtest.py`, `cu/bench.py`, `api/server.py`, `web/js/views/hwtest.js` |
 | camera localisation | `trackloc/` (its README is the user guide) |
 | field test plan | `docs/hardware-test.md`, `docs/fr/hardware-test.md` |

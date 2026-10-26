@@ -20,7 +20,8 @@ from urllib.parse import urlsplit
 
 from aiohttp import WSMsgType, web
 
-from ..app import LONG_OPS, OpError, RaceLabApp
+from ..app import LONG_OPS, RaceLabApp
+from ..errors import OpError
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,11 @@ _ids = itertools.count(1)
 
 def _json(data: Any, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, dumps=lambda d: json.dumps(d, ensure_ascii=False))
+
+
+def _refusal(e: OpError) -> dict[str, Any]:
+    """The error reply of a refused command: its English text, and its reason code when it has one."""
+    return {"error": str(e), "code": e.code, "params": e.params} if e.code else {"error": str(e)}
 
 
 def _split_host(value: str) -> tuple[str, int | None] | None:
@@ -198,7 +204,7 @@ def create_web_app(app: RaceLabApp) -> web.Application:
         try:
             result = await app.handle(op, args, client)
         except OpError as e:
-            return _json({"ok": False, "error": str(e)}, 400)
+            return _json({"ok": False, **_refusal(e)}, 400)
         return _json({"ok": True, "result": result})
 
     async def websocket(request: web.Request):
@@ -226,7 +232,7 @@ def create_web_app(app: RaceLabApp) -> web.Application:
                 result = await app.handle(op, req, name)
                 reply = {"type": "reply", "id": rid, "ok": True, "result": result}
             except OpError as e:
-                reply = {"type": "reply", "id": rid, "ok": False, "error": str(e)}
+                reply = {"type": "reply", "id": rid, "ok": False, **_refusal(e)}
             except asyncio.CancelledError:
                 raise
             except Exception:

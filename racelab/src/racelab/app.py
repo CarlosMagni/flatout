@@ -7,11 +7,8 @@ messages are brought back into it with `call_soon_threadsafe`.
 from __future__ import annotations
 
 import asyncio
-import math
 import dataclasses
-import json
 import logging
-import os
 import subprocess
 import time
 from collections import deque
@@ -24,7 +21,7 @@ from .bots.manager import BotManager
 from .bots.brain import pilots_meta
 from .bots.profiles import PROFILE_LABELS, PROFILES
 from .config import Config, apply_connection_choice, save_overrides
-from .cu.firmware import FirmwareLibrary, ImageError, build_images, can_build, missing_images
+from .cu.firmware import FirmwareLibrary, FirmwareUpdate, ImageError, build_images, can_build, missing_images
 from .cu.link import CULink
 from .drive import ControllerInterface, SerialInterface, bluetooth, interface_ports
 from .events import (
@@ -43,6 +40,8 @@ from .events import (
     StatusMsg,
     TimerMsg,
 )
+from .errors import OpError
+from .hwtest import HwTestBench
 from .race.engine import RaceEngine
 from .race.modes import SESSION_TYPES, SessionSettings
 from .race.recorder import SessionRecorder
@@ -79,12 +78,6 @@ FIRMWARE_SAFE_OPS = frozenset({
     "track.set", "track.positions", "track.clear", "connector.set", "connector.clear",
 })
 FIRMWARE_CONFIRM = "FLASH"
-# Hardware test bench (System -> Hardware test): limits enforced here, never in the UI
-HW_THROTTLE_MAX = 6
-HW_PULSE_MS = (200, 2000)
-HW_HANDBACK_PAUSE_MS = (1000, 2500)
-HW_BENCH_MAX = 300
-HW_REPORT_MAX = 200_000  # bytes
 # These ops wait (up to a few seconds): the WebSocket answers them in the background so that
 # STOP, sent by the same client meanwhile, is never queued behind them.
 LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback", "interface.bt_scan",
@@ -92,11 +85,6 @@ LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback", 
 UPDATE_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)  # offline, no git, GitHub down...
 UPDATE_EVERY_S = 6 * 3600  # an app left running checks again this often
 CONNECTOR_LIMITS = {"name": 40, "ui_url": 300, "status": 80}
-VERIFY_TIMEOUT_S = 45.0  # the CU must answer after its reboot
-
-
-class OpError(Exception):
-    """Command refused: the message is shown as is to the user."""
 
 
 class _IdleLink:
@@ -203,14 +191,14 @@ class RaceLabApp:
         self.recorder = SessionRecorder(cfg.data_path / "sessions")
         self._recording = False
         self.firmware_lib = FirmwareLibrary(cfg.data_path / "firmware")
-        self.fw = self._fw_reset()
+        self.fw = FirmwareUpdate(self.firmware_lib, self._flash_cu, self._log, self._event)
         self.fw_build: dict[str, Any] = {"state": "idle", "log": ""}
         if self.sim is not None:
             self.sim.bot_images = self.firmware_lib.bot_line_digests()
         self.track_feed = TrackFeed()
         self._connectors: dict[str, dict[str, Any]] = {}  # agent name -> card (one per connection)
-        self._hw_busy: str | None = None  # hardware test in progress (one at a time)
-        self._hw: dict[str, Any] | None = None  # what the UI shows of it: {kind, slot, phase}
+        self.hwtest = HwTestBench(self.cu, self.bots, self._hw_preconditions, safety=cfg.safety,
+                                  folder=cfg.data_path / "hardware-tests", log=self._log, event=self._event)
 
     # ------------------------------------------------------------ transport
 
@@ -335,7 +323,7 @@ class RaceLabApp:
     def _check_relink(self, what: str) -> None:
         if self.engine.state not in IDLE_STATES:
             raise OpError(f"end the session before {what}")
-        if self.fw["state"] in ("running", "verifying"):
+        if self.fw.busy:
             raise OpError("firmware update in progress")
 
     async def _relink(self, apply: Callable[[], None]) -> None:
@@ -436,7 +424,7 @@ class RaceLabApp:
         elif isinstance(msg, TimerMsg):
             self.engine.on_timer(msg)
         elif isinstance(msg, FirmwareProgress):
-            self._on_firmware(msg)
+            self.fw.on_progress(msg)
         elif isinstance(msg, LinkState):
             prev = self.link_info["state"]
             self._cu_bots = (msg.bots_supported, msg.bot_transport)
@@ -449,8 +437,7 @@ class RaceLabApp:
                 msg = dataclasses.replace(msg, bots_supported=True, bot_transport="I")
             self.bots.on_link(msg)
             self._apply_mode()
-            if msg.state == "connected" and self.fw["state"] == "verifying":
-                self._firmware_verified(msg)
+            self.fw.on_link(msg)
             if msg.state != prev:
                 self._link_log(msg)
             self._event("link", dict(self.link_info))
@@ -559,9 +546,7 @@ class RaceLabApp:
             now = time.monotonic()
             try:
                 self.engine.tick(now)  # also advances the position tower
-                if self.fw["state"] == "verifying" and now - self.fw["_since"] > VERIFY_TIMEOUT_S:
-                    self._firmware_failed("the CU does not answer after the update: "
-                                          "retry in recovery mode")
+                self.fw.tick(now)
                 if self.mode == "advanced":
                     self.bots.tick(self.engine.snapshot(), *self._track_inputs())
                 if self._listeners:
@@ -580,9 +565,10 @@ class RaceLabApp:
         snap["advanced_unavailable"] = self.advanced_unavailable()
         snap["link"] = dict(self.link_info)
         snap["estop"] = self.bots.estopped
-        snap["firmware"] = {k: v for k, v in self.fw.items() if not k.startswith("_")}
+        snap["firmware"] = self.fw.status()
         snap["firmware_build"] = self._fw_build_info()
-        snap["hwtest"] = dict(self._hw) if self._hw else None
+        snap["hwtest"] = self.hwtest.snapshot()
+        snap["hwtest_why"] = self.hwtest.why()
         snap["update"] = self.update_info
         if self.mode == "advanced":
             snap["bots"] = self.bots.snapshot(self.drive.bot_applied())
@@ -634,8 +620,7 @@ class RaceLabApp:
             "api": {"state_hz": self.cfg.api.state_hz, "auth": bool(self.cfg.api.token)},
             "track": self.track_geometry(),
             "firmware_confirm": FIRMWARE_CONFIRM,
-            "hwtest": {"throttle_max": HW_THROTTLE_MAX, "pulse_ms": list(HW_PULSE_MS),
-                       "handback_pause_ms": list(HW_HANDBACK_PAUSE_MS), "bench_max": HW_BENCH_MAX},
+            "hwtest": self.hwtest.limits(),
             "config_file": self.cfg.source,
             "data_dir": str(self.cfg.data_path),
         }
@@ -659,13 +644,10 @@ class RaceLabApp:
             raise OpError(f"unknown command: {op}")
         if op.startswith(("bot.", "console.")) and self.mode != "advanced":
             raise OpError("available in advanced mode only")
-        if self.fw["state"] in ("running", "verifying") and op not in FIRMWARE_SAFE_OPS:
+        if self.fw.busy and op not in FIRMWARE_SAFE_OPS:
             raise OpError("firmware update in progress: wait until it finishes")
-        if self._hw and self._hw["slot"] is not None and op.startswith("bot."):
-            # the 6 cap of a hardware test must not be bypassed from another page
-            for a in args.get("actions") or [args]:
-                if isinstance(a, dict) and _same_slot(a.get("slot"), self._hw["slot"]):
-                    raise OpError(f"slot {self._hw['slot'] + 1} is under a hardware test")
+        if op.startswith("bot."):
+            self.hwtest.protect(args)
         try:
             result = fn(self, args, client)
             if asyncio.iscoroutine(result):
@@ -817,7 +799,8 @@ class RaceLabApp:
         # the CU excludes disabled drivers from timing: a bot would drive there without being counted
         for d in self.cfg.drivers:
             if d.slot == slot and not d.enabled:
-                raise OpError(f"{d.name} (slot {slot + 1}) is disabled: enable it in Session → Drivers")
+                raise OpError(f"{d.name} (slot {slot + 1}) is disabled: enable it in Session → Drivers",
+                              "slot_disabled", name=d.name, car=slot + 1)
 
     def _op_bot_take(self, args, client):
         self._require_enabled(int(args["slot"]))
@@ -1014,46 +997,25 @@ class RaceLabApp:
         self.sim.drop_link(seconds)
         self._log("warn", f"Virtual CU: simulated link drop ({seconds:.0f} s)", "sim_drop", seconds=f"{seconds:.0f}")
 
-    # firmware (DFU)
-    def _fw_reset(self) -> dict[str, Any]:
-        return {"state": "idle", "stage": None, "done": 0, "total": 0, "image": None,
-                "recovery": False, "error": None, "started": None, "eta_s": None,
-                "result": None, "_since": 0.0}
-
     def _op_fw_images(self, args, client):
         return [i.info() for i in self.firmware_lib.images()]
 
     def _op_fw_status(self, args, client):
-        return {k: v for k, v in self.fw.items() if not k.startswith("_")}
+        return self.fw.status()
+
+    # firmware (DFU): the update itself is cu/firmware.py FirmwareUpdate
+    def _flash_cu(self, lines: list[bytes], recovery: bool) -> None:
+        self.bots.release_all()  # the update takes the CU: the bots let go of it first
+        self.link.firmware_update(lines, recovery=recovery)
 
     def _op_fw_flash(self, args, client):
         if str(args.get("confirm", "")).strip().upper() != FIRMWARE_CONFIRM:
             raise OpError(f"missing confirmation: type {FIRMWARE_CONFIRM}")
         if self.engine.state not in IDLE_STATES:
             raise OpError("end the session before updating the firmware")
-        recovery = bool(args.get("recovery", False))
-        if not recovery and self.link_info["state"] != "connected":
-            raise OpError("CU not connected (if it stayed in update mode: recovery mode)")
-        version = self.link_info.get("version") or ""
-        if not recovery and not version.startswith("5"):  # "8339": hardware 8 (STM32), firmware 339
-            raise OpError(f"this CU is hardware {version[:1] or '?'} (version {version or 'unknown'}): "
-                          "the images are for hardware 5 only")
-        try:
-            image = self.firmware_lib.get(str(args["image"]))
-        except ImageError as e:
-            raise OpError(str(e)) from None
-        if image.known and image.known.status == "defective":
-            raise OpError(f"image {image.sha256[:8]}… refused: {image.known.warning}")
-        self.bots.release_all()
-        self.link.firmware_update(image.lines, recovery=recovery)
-        self.fw = self._fw_reset()
-        self.fw.update(state="running", stage="prepare", total=len(image.lines), image=image.info(),
-                       recovery=recovery, started=time.time(), _since=time.monotonic())
-        self._log("warn", f"Firmware update: {image.name} ({len(image.lines)} lines"
-                          f"{', recovery' if recovery else ''})",
-                  "fw_start_recovery" if recovery else "fw_start", name=image.name, lines=len(image.lines))
-        self._event("firmware", self._op_fw_status(args, client))
-        return self._op_fw_status(args, client)
+        self.fw.start(str(args["image"]), recovery=bool(args.get("recovery", False)),
+                      link_state=self.link_info["state"], version=self.link_info.get("version"))
+        return self.fw.status()
 
     def _fw_build_info(self) -> dict[str, Any]:
         return {**self.fw_build, "available": can_build(), "missing": missing_images()}
@@ -1063,7 +1025,7 @@ class RaceLabApp:
 
     def _op_fw_build(self, args, client):
         """Build the firmware images from source in the background (firmware/build.py)."""
-        if self.fw["state"] in ("running", "verifying"):
+        if self.fw.busy:
             raise OpError("firmware update in progress")
         if self.fw_build["state"] == "building":
             raise OpError("the images are already being built")
@@ -1082,40 +1044,9 @@ class RaceLabApp:
         self._event("firmware_build", self._fw_build_info())
 
     def _op_fw_abort(self, args, client):
-        if self.fw["state"] != "running":
+        if self.fw.state != "running":
             raise OpError("no update in progress")
         self.link.firmware_abort()
-
-    def _on_firmware(self, msg: FirmwareProgress) -> None:
-        fw = self.fw
-        if fw["state"] not in ("running", "verifying"):
-            return
-        fw.update(stage=msg.stage, done=msg.done, total=msg.total)
-        if msg.stage == "write" and msg.done:
-            rate = msg.done / max(0.001, time.monotonic() - fw["_since"])
-            fw["eta_s"] = round((msg.total - msg.done) / rate) if rate > 0 else None
-        if msg.stage == "reboot":
-            fw.update(state="verifying", eta_s=None, _since=time.monotonic())
-        elif msg.stage == "failed":
-            self._firmware_failed(msg.error or "failed")
-            return
-        self._event("firmware", self._op_fw_status({}, ""))
-
-    def _firmware_verified(self, st: LinkState) -> None:
-        fw = self.fw
-        fw.update(state="done", stage="done",
-                  result={"version": st.version, "bots_supported": st.bots_supported,
-                          "bot_module": st.bot_module})
-        bots = {True: "bot module detected", False: "firmware without bot module", None: "not probed"}
-        self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bot_module]}",
-                  "fw_done." + {True: "module", False: "no_module", None: "unknown"}[st.bot_module], version=st.version)
-        self._event("firmware", self._op_fw_status({}, ""))
-
-    def _firmware_failed(self, error: str) -> None:
-        self.fw.update(state="failed", error=error, eta_s=None)
-        self._log("error", f"Firmware update: {error}. The CU can still be re-flashed "
-                           f"(factory bootloader): retry, in recovery mode if needed.", "fw_failed", error=error)
-        self._event("firmware", self._op_fw_status({}, ""))
 
     def add_firmware(self, data: bytes, name: str) -> dict[str, Any]:
         try:
@@ -1126,248 +1057,41 @@ class RaceLabApp:
                   name=image.name, lines=len(image.lines))
         return image.info()
 
-    # ------------------------------------------------------------ hardware test (System -> Hardware test)
+    # ------------------------------------------------------------ hardware test (hwtest.py)
 
-    def _hw_phase(self, phase: str, **extra: Any) -> None:
-        if self._hw is not None:
-            self._hw = {**self._hw, "phase": phase, **extra}
-            self._event("hwtest", dict(self._hw))
-
-    def _hw_guard(self, slot: int, *, need_c: bool = False, alone: bool = False) -> None:
-        """Every reason a test must not take a slot (the checks are repeated at run time by the hold)."""
-        if self._hw_busy:
-            raise OpError(f"another hardware test is running ({self._hw_busy})")
+    def _hw_preconditions(self, scope: str, slot: int | None) -> None:
+        """What the hardware test bench needs of the app: refuses with the reason's code (the checks
+        come in the order the System page words them; the scopes are in hwtest.py)."""
         info = self.link_info
         if info["state"] != "connected":
-            raise OpError("CU not connected")
-        if info["bots_supported"] is not True:
-            raise OpError("this CU cannot take software drivers (bots)")
+            raise OpError("CU not connected", "link")
+        if scope == "link":
+            return
+        if scope != "run" and info["bots_supported"] is not True:
+            raise OpError("this CU cannot take software drivers (bots)", "bots")
+        if self.engine.state not in IDLE_STATES:
+            raise OpError("a session is running: end it before a hardware test", "session")
+        if scope == "run":
+            return
         if self.mode != "advanced":
-            raise OpError("switch to With bots first (top bar)")
-        if self.engine.state not in IDLE_STATES:
-            raise OpError("a session is running: end it before a hardware test")
+            raise OpError("switch to With bots first (top bar)", "mode")
         if self.bots.estopped:
-            raise OpError("E-STOP engaged: clear it first")
-        if need_c and info["bot_transport"] != "C":
-            raise OpError("this test is about the C command: this CU is driven another way")
-        s = self.bots.slots[slot]
-        if s.driver == "api":
-            raise OpError(f"slot {slot + 1} is driven by an API agent ({s.agent or 'unclaimed'})")
-        if s.driver is not None:
-            raise OpError(f"slot {slot + 1} is already a bot: release it first")
-        self._require_enabled(slot)
-        if alone and self.bots.active_slots():
-            # the C table is one frame for all slots: a pause would drop every bot, not only the test's
-            raise OpError("the hand-back test needs every slot free of bots (release them first)")
-
-    def _hw_abort_reason(self) -> str | None:
-        if self.bots.estopped:
-            return "estop"
-        if self.link_info["state"] != "connected":
-            return "link"
-        if self.engine.state not in IDLE_STATES:
-            return "session"
-        return None
-
-    async def _hw_wait_applied(self, slot: int, value: int, timeout: float) -> bool:
-        """Until the CU link has put `value` on the wire for the slot."""
-        end = time.monotonic() + timeout
-        while self.link.bot_applied()[slot] != value:
-            if time.monotonic() >= end:
-                return False
-            await asyncio.sleep(0.02)
-        return True
-
-    async def _hw_hold(self, slot: int, seconds: float) -> dict[str, Any]:
-        """Wait `seconds` (server clock), watching E-STOP, link and session; reports what the CU got."""
-        t0 = time.monotonic()
-        peak, gate, aborted = 0, None, None
-        while (left := seconds - (time.monotonic() - t0)) > 0:
-            aborted = self._hw_abort_reason()
-            if aborted:
-                break
-            applied = self.link.bot_applied()[slot]
-            peak = max(peak, applied or 0)
-            gate = self.bots.slots[slot].gate or gate
-            await asyncio.sleep(min(0.05, left))
-        return {"held_ms": round((time.monotonic() - t0) * 1000), "applied_peak": peak,
-                "gate": gate, "aborted": aborted}
-
-    async def _hw_end(self, slot: int) -> dict[str, Any]:
-        """Always: throttle 0 on the wire, heartbeat back, slot handed back. Never raises."""
-        end = {"zeroed": False, "released": False}
-        s = self.bots.slots[slot]
-        if s.driver != "manual":
-            return end  # somebody else took the slot meanwhile: not ours to touch
-        try:
-            self.bots.set_manual(slot, 0)
-        except Exception:
-            logger.exception("hardware test: set_manual(0)")
-            try:
-                self.link.set_bot(slot, 0)
-            except Exception:
-                logger.exception("hardware test: set_bot(0)")
-        try:
-            self.link.resume_heartbeat()  # after the 0 is queued: never a heartbeat at the old throttle
-        except Exception:
-            logger.exception("hardware test: resume_heartbeat")
-        try:
-            end["zeroed"] = await self._hw_wait_applied(slot, 0, 0.3)
-        except Exception:
-            logger.exception("hardware test: wait for 0")
-        finally:  # also on a second cancellation (CancelledError) during the wait
-            try:
-                self.bots.release(slot)
-                end["released"] = True
-            except Exception:
-                logger.exception("hardware test: release")
-                try:
-                    self.link.set_bot(slot, None)
-                except Exception:
-                    logger.exception("hardware test: set_bot(None)")
-        return end
-
-    async def _hw_run(self, kind: str, slot: int, body, *, need_c: bool = False, alone: bool = False):
-        """Take the slot as a manual bot, run `body`, and in all cases zero + release it."""
-        self._hw_guard(slot, need_c=need_c, alone=alone)
-        self._hw_busy = kind
-        self._hw = {"kind": kind, "slot": slot, "phase": "start"}
-        self._event("hwtest", dict(self._hw))
-        out: dict[str, Any] = {"slot": slot}
-        try:
-            self.bots.take(slot, "manual")
-            self._hw_phase("run")
-            out.update(await body())
-        finally:
-            try:
-                out.update(await self._hw_end(slot))
-            finally:
-                self._hw_busy = None
-                self._hw_phase("done", aborted=out.get("aborted"))
-                self._hw = None
-        self._log("info", f"Hardware test {kind} on slot {slot + 1}: "
-                          f"{'aborted (' + out['aborted'] + ')' if out.get('aborted') else 'done'}",
-                  "hw_aborted" if out.get("aborted") else "hw_done", kind=kind, car=slot + 1, reason=out.get("aborted"))
-        return out
-
-    def _hw_throttle(self, args, default: int | None = None) -> int:
-        """Requested throttle, hard-capped at HW_THROTTLE_MAX (refused above) and at [safety] max_throttle."""
-        throttle = min(_hw_int(args, "throttle", 1, HW_THROTTLE_MAX, default=default), HW_THROTTLE_MAX)
-        effective = min(throttle, self.cfg.safety.max_throttle)
-        if effective < 1:
-            raise OpError("[safety] max_throttle is 0: no bot can move")
-        return effective
-
-    async def _hw_move(self, slot: int, throttle: int, ms: int, *, lane: bool = False) -> dict[str, Any]:
-        """Hold `throttle` for `ms` (clock started once the CU link has put it on the wire)."""
-        self.bots.set_manual(slot, throttle)
-        if not await self._hw_wait_applied(slot, throttle, 0.6):
-            return {"throttle": throttle, "ms": ms, "held_ms": 0, "applied_peak": 0, "acked": False,
-                    "gate": self.bots.slots[slot].gate, "aborted": self._hw_abort_reason()}
-        if lane:
-            self.bots.lane(slot)  # the existing lane path (C: button held ~120 ms; B: one-shot)
-        out = await self._hw_hold(slot, ms / 1000)
-        out = {"throttle": throttle, "ms": ms, "acked": out["applied_peak"] == throttle, **out}
-        return {**out, "lane_sent": out["aborted"] is None} if lane else out
-
-    async def _op_test_pulse(self, args, client):
-        slot = _hw_int(args, "slot", 0, 5)
-        throttle = self._hw_throttle(args)
-        ms = _hw_int(args, "ms", *HW_PULSE_MS)
-        return await self._hw_run("pulse", slot, lambda: self._hw_move(slot, throttle, ms))
-
-    async def _op_test_lane(self, args, client):
-        """One-shot lane request while the car runs (it applies it at the next lane changer)."""
-        slot = _hw_int(args, "slot", 0, 5)
-        throttle = self._hw_throttle(args, default=3)
-        ms = _hw_int(args, "ms", *HW_PULSE_MS, default=HW_PULSE_MS[1])
-        return await self._hw_run("lane", slot, lambda: self._hw_move(slot, throttle, ms, lane=True))
-
-    async def _op_test_handback(self, args, client):
-        slot = _hw_int(args, "slot", 0, 5)
-        throttle = self._hw_throttle(args, default=3)
-        pause_ms = _hw_int(args, "pause_ms", *HW_HANDBACK_PAUSE_MS, default=1500)
-
-        async def body():
-            self.bots.set_manual(slot, throttle)
-            if not await self._hw_wait_applied(slot, throttle, 0.6):
-                return {"throttle": throttle, "pause_ms": pause_ms, "paused_ms": 0, "acked": False,
-                        "aborted": self._hw_abort_reason()}
-            run_up = await self._hw_hold(slot, 0.5)  # the car picks up speed
-            if run_up["aborted"]:
-                return {"throttle": throttle, "pause_ms": pause_ms, "paused_ms": 0, "acked": True,
-                        "aborted": run_up["aborted"]}
-            self._hw_phase("paused", pause_ms=pause_ms)
-            self.link.pause_heartbeat(pause_ms / 1000 + 0.25)  # auto-clears, whatever happens here
-            out = await self._hw_hold(slot, pause_ms / 1000)
-            return {"throttle": throttle, "pause_ms": pause_ms, "paused_ms": out["held_ms"], "acked": True,
-                    "gate": out["gate"], "aborted": out["aborted"]}
-
-        return await self._hw_run("handback", slot, body, need_c=True, alone=True)
+            raise OpError("E-STOP engaged: clear it first", "estop")
+        if scope == "handback" and info["bot_transport"] != "C":
+            raise OpError("this test is about the C command: this CU is driven another way", "transport")
+        if slot is not None:
+            self._require_enabled(slot)
 
     async def _op_link_bench(self, args, client):
-        n = _hw_int(args, "n", 1, HW_BENCH_MAX, default=100)
-        if self._hw_busy:
-            raise OpError(f"another hardware test is running ({self._hw_busy})")
-        if self.link_info["state"] != "connected":
-            raise OpError("CU not connected")
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future = loop.create_future()
-
-        def done(result, error):
-            loop.call_soon_threadsafe(lambda: future.done() or future.set_result((result, error)))
-
-        self._hw_busy = "bench"
-        self._hw = {"kind": "bench", "slot": None, "phase": "run"}
-        timed_out = False
-        try:
-            try:
-                self.link.bench(n, done)
-            except (ValueError, RuntimeError) as e:
-                raise OpError(str(e)) from None
-            try:
-                result, error = await asyncio.wait_for(future, _bench_timeout(n))
-            except asyncio.TimeoutError:
-                # a slow or lossy link is what this test is for: keep what was measured
-                partial = self.link.bench_cancel()
-                if partial is None or not partial.poll:
-                    raise OpError("the CU did not answer in time") from None
-                result, error, timed_out = partial.result(), None, True
-        finally:
-            self.link.bench_cancel()
-            self._hw_busy, self._hw = None, None
-        if error:
-            raise OpError(f"latency test interrupted: {error}")
-        result.update(transport=self.link_info["transport"], bot_transport=self.link_info["bot_transport"],
-                      timed_out=timed_out)
-        return result
+        result = await self.hwtest.latency(args)
+        return {**result, "transport": self.link_info["transport"], "bot_transport": self.link_info["bot_transport"]}
 
     def _op_test_report(self, args, client):
-        report = args.get("report")
-        if not isinstance(report, dict):
-            raise OpError("report: an object is expected")
-        if len(json.dumps(report, ensure_ascii=False)) > HW_REPORT_MAX:
-            raise OpError("report too large")
-        report = {**report, "server": {
-            "racelab": __version__, "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mode": self.mode,
+        return self.hwtest.save_report(args.get("report"), {
+            "racelab": __version__, "mode": self.mode,
             "link": {k: self.link_info.get(k) for k in ("state", "transport", "version", "bots_supported",
                                                          "bot_transport", "bot_module", "rtt_ms")},
-            "safety": dataclasses.asdict(self.cfg.safety)}}
-        folder = self.cfg.data_path / "hardware-tests"
-        try:
-            folder.mkdir(parents=True, exist_ok=True)
-            stem = "hwtest-" + time.strftime("%Y%m%d-%H%M%S")
-            path, n = folder / f"{stem}.json", 1
-            while path.exists():
-                n += 1
-                path = folder / f"{stem}-{n}.json"
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp, path)
-        except OSError as e:
-            raise OpError(f"cannot save the report: {e}") from None
-        self._log("info", f"Hardware test report saved: {path.name}", "hw_saved", name=path.name)
-        return {"name": path.name, "path": str(path), "report": report}
+            "safety": dataclasses.asdict(self.cfg.safety)})
 
     # connection and application
     async def _op_cu_connect(self, args, client):
@@ -1441,7 +1165,7 @@ class RaceLabApp:
             raise OpError("updating from the interface is unavailable")
         if self.engine.state not in IDLE_STATES:
             raise OpError("end the session before updating")
-        if self.fw["state"] in ("running", "verifying"):
+        if self.fw.busy:
             raise OpError("firmware update in progress")
         self._log("info", "Updating RaceLab…", "update_start")
         self.bots.release_all()  # the CU is let go first, cleanly, not after minutes of download
@@ -1460,7 +1184,7 @@ class RaceLabApp:
     def _op_quit(self, args, client):
         if self.request_quit is None:
             raise OpError("quitting from the interface is unavailable")
-        if self.fw["state"] in ("running", "verifying"):
+        if self.fw.busy:
             raise OpError("firmware update in progress: cannot quit now")
         self._log("info", "Quit requested from the interface", "quit")
         self.loop.call_later(0.3, self.request_quit)  # time for the reply to go out
@@ -1527,35 +1251,11 @@ class RaceLabApp:
         "firmware.build": _op_fw_build,
         "firmware.build_status": _op_fw_build_status,
         "link.bench": _op_link_bench,
-        "test.pulse": _op_test_pulse,
-        "test.lane": _op_test_lane,
-        "test.handback": _op_test_handback,
+        "test.pulse": lambda self, a, c: self.hwtest.pulse(a),
+        "test.lane": lambda self, a, c: self.hwtest.lane(a),
+        "test.handback": lambda self, a, c: self.hwtest.handback(a),
         "test.report": _op_test_report,
     }
-
-
-def _bench_timeout(n: int) -> float:
-    return 15.0 + n * 0.1
-
-
-def _same_slot(value: Any, slot: int) -> bool:
-    """True if `value` designates `slot` the way the bot ops parse it (`int(args["slot"])`: "0" and 0.0
-    are slot 0 too); an unparsable value designates nothing and is refused later by the op itself."""
-    try:
-        return int(value) == slot
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
-def _hw_int(args: dict[str, Any], key: str, lo: int, hi: int, *, default: int | None = None) -> int:
-    """Integer argument within [lo, hi]: refused, never clamped (the limits are safety limits)."""
-    value = args.get(key, default)
-    if (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
-            or int(value) != value):
-        raise OpError(f"{key}: an integer {lo}..{hi} is expected")
-    if not lo <= value <= hi:
-        raise OpError(f"{key}: {lo}..{hi} expected (got {int(value)})")
-    return int(value)
 
 
 def _describe(e: Exception) -> str:

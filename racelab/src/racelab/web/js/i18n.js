@@ -759,6 +759,10 @@ const en = {
   "hw.why.busy": "Another step is running.",
   "hw.why.transport": "The hand-back test is about the C command, which this CU is not using.",
   "hw.why.bots_active": "The hand-back test needs every slot free of bots: release them first.",
+  "hw.why.slot_api": "Car {car} is driven by an API agent ({agent}).",
+  "hw.why.slot_bot": "Car {car} is already a bot: release it first.",
+  "hw.why.slot_disabled": "{name} (car {car}) is disabled: enable it in Session → Drivers.",
+  "hw.why.no_throttle": "[safety] max_throttle is 0: no bot can move.",
   "hw.step.link.title": "Link check",
   "hw.step.link.desc": "Transport, CU version, and how bots reach the cars (C, B or none).",
   "hw.step.link.run": "Check the link",
@@ -1610,6 +1614,10 @@ const fr = {
   "hw.why.busy": "Une autre étape est en cours.",
   "hw.why.transport": "Le test de rendu porte sur la commande C, que cette CU n'utilise pas.",
   "hw.why.bots_active": "Le test de rendu demande que tous les slots soient libres de bots : rends-les d'abord.",
+  "hw.why.slot_api": "La voiture {car} est pilotée par un agent API ({agent}).",
+  "hw.why.slot_bot": "La voiture {car} est déjà un bot : rends-la d'abord.",
+  "hw.why.slot_disabled": "{name} (voiture {car}) est désactivé : active-le dans Séance → Pilotes.",
+  "hw.why.no_throttle": "[safety] max_throttle vaut 0 : aucun bot ne peut bouger.",
   "hw.step.link.title": "Vérification du lien",
   "hw.step.link.desc": "Transport, version de la CU, et comment les bots atteignent les voitures (C, B ou aucun).",
   "hw.step.link.run": "Vérifier le lien",
@@ -1768,8 +1776,8 @@ export function t(key, vars) {
 // Translated text if the key exists, otherwise `fallback`. Used for labels that the
 // server also sends (session types, bot profiles): the dictionary wins, the server
 // text covers anything unknown (e.g. a type added by a plugin).
-export function tOr(key, fallback) {
-  return lookup(key) !== undefined ? t(key) : fallback;
+export function tOr(key, fallback, vars) {
+  return lookup(key) !== undefined ? t(key, vars) : fallback;
 }
 
 // The server's default driver names are English ("Driver 3"): show them in the UI

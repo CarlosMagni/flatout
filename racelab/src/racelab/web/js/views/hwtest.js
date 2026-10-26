@@ -1,8 +1,8 @@
 // "Hardware test" panel (System screen): a bench to validate the stock CU's C command on a real track.
 // Every timing and every limit lives on the server (test.* and link.bench ops): this file only
 // asks, shows what came back, and records the tester's yes / no answers in a report.
-import { IDLE_STATES, h, setText, toggle } from "../dom.js";
-import { lang, t } from "../i18n.js";
+import { h, setText, toggle } from "../dom.js";
+import { driverName, lang, t, tOr } from "../i18n.js";
 import { onEvent, readJson, request, store, writeJson } from "../store.js";
 import { Stepper, confirmModal, copyText, estopButton, run, toast } from "../ui/components.js";
 
@@ -35,6 +35,14 @@ const memory = { results: kept.results, notes: kept.notes, saved: null, settings
 function keep() {
   const empty = !Object.keys(memory.results).length && !memory.notes.trim();
   writeJson(STORE_KEY, empty ? null : { results: memory.results, notes: memory.notes });
+}
+
+// What forbids a test, or refused it, in the page's language: the server sends a reason code
+// (state.hwtest_why, the `code` of a refusal: docs/api.md), its text is `hw.why.<code>`.
+function whyText(code, params, fallback) {
+  if (!code) return fallback ?? null;
+  const vars = params?.name != null ? { ...params, name: driverName(params.name, params.car - 1) } : params;
+  return tOr(`hw.why.${code}`, fallback ?? code, vars);
 }
 
 const laneMs = (ms) => Math.max(ms, LANE_MIN_MS);
@@ -193,21 +201,13 @@ export class HwTestPanel {
 
   update(state) {
     this.state = state;
-    const link = state.link || {};
-    const connected = store.online && link.state === "connected";
-    const idle = IDLE_STATES.has(state.session?.state);
-    const advanced = state.mode === "advanced";
     const busy = !!state.hwtest || !!this.running;
-    const bots = (state.bots || []).filter((b) => b.active).length;
-    let why = null;
-    let needMode = false;
-    if (!connected) why = t("hw.why.link");
-    else if (link.bots_supported !== true) why = t("hw.why.bots");
-    else if (!idle) why = t("hw.why.session"); // before the mode: the mode cannot change during a session
-    else if (!advanced) { why = t("hw.why.mode"); needMode = true; }
-    else if (state.estop) why = t("hw.why.estop");
-    const handbackWhy = why || (link.bot_transport !== "C" ? t("hw.why.transport") : bots ? t("hw.why.bots_active") : null);
-    const sig = [connected, why, handbackWhy, busy, state.estop, needMode, idle, store.online, this.running].join("|");
+    // the server says what forbids each test (reason codes); offline, it is the link that is missing
+    const codes = store.online ? state.hwtest_why || {} : { latency: "link", move: "link", handback: "link" };
+    const why = whyText(codes.move);
+    const handbackWhy = whyText(codes.handback);
+    const needMode = codes.move === "mode"; // the server checks the session first: it is idle then
+    const sig = [codes.latency, codes.move, codes.handback, busy, state.estop, store.online, this.running].join("|");
     if (sig === this.sig) return;
     this.sig = sig;
 
@@ -216,11 +216,10 @@ export class HwTestPanel {
     toggle(this.why, "hidden", !(why || handbackWhy));
     setText(this.why, why || handbackWhy || "");
     toggle(this.modeBtn, "hidden", !needMode);
-    this.modeBtn.disabled = !idle;
     // every disabled run button says why, under itself and in its tooltip
     const own = {
       link_check: store.online ? null : t("topbar.server_down"),
-      latency: connected ? null : t("hw.why.link"),
+      latency: whyText(codes.latency),
       pulse: why, lane: why, handback: handbackWhy,
     };
     for (const id of STEP_IDS) {
@@ -310,8 +309,8 @@ export class HwTestPanel {
   }
 
   refused(id, error) {
-    toast(error.message, "error", 5000);
-    this.setResult(id, { status: "refused", error: error.message });
+    toast(whyText(error.code, error.params, error.message), "error", 5000);
+    this.setResult(id, { status: "refused", error: error.message, code: error.code, params: error.params });
   }
 
   answer(id, yes) {
@@ -429,7 +428,7 @@ export class HwTestPanel {
   }
 
   resultParts(id, r) {
-    if (r.status === "refused") return [h("p.note", { text: t("hw.refused", { error: r.error }) })];
+    if (r.status === "refused") return [h("p.note", { text: t("hw.refused", { error: whyText(r.code, r.params, r.error) }) })];
     if (id === "link_check") return this.linkParts(r);
     if (id === "latency") return this.latencyParts(r);
     const out = [];

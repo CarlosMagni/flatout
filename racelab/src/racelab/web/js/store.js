@@ -107,7 +107,8 @@ export function connect() {
         if (!p) break;
         pending.delete(msg.id);
         clearTimeout(p.timer);
-        msg.ok ? p.resolve(msg.result) : p.reject(new Error(msg.error || t("err.generic")));
+        // `code` + `params`: the reason of a refusal, for the page that words it (docs/api.md)
+        msg.ok ? p.resolve(msg.result) : p.reject(Object.assign(new Error(msg.error || t("err.generic")), { code: msg.code, params: msg.params }));
         break;
       }
     }

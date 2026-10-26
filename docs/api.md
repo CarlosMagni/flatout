@@ -33,6 +33,7 @@ is `hello.client`),
 {"type": "event", "name": "lap", "data": {…}, "t": 1234.5}
 {"type": "reply", "id": 7, "ok": true, "result": …}    // reply to a command
 {"type": "reply", "id": 8, "ok": false, "error": "slot 2 not claimed by this agent"}
+{"type": "reply", "id": 9, "ok": false, "error": "E-STOP engaged: clear it first", "code": "estop", "params": {}}
 {"type": "raw", "dir": "tx", "data": "B07", "t": …}    // raw frames (console subscription)
 ```
 
@@ -74,7 +75,7 @@ is `hello.client`),
 | `firmware.build` | | starts building the images from source (`firmware/build.py`) in the background; progress in the `firmware_build` event and the state's `firmware_build` |
 | `firmware.flash` | `image` (id), `confirm: "FLASH"`, `recovery?` | flash the CU (outside a session; refused for a `defective` image); progress in the `firmware` events and in `state.firmware` |
 | `firmware.abort` | | interrupt the flash (the CU stays in its bootloader: run again with `recovery: true`) |
-| `firmware.status` | | `{state: idle\|running\|verifying\|done\|failed, stage, done, total, eta_s, error, result}` |
+| `firmware.status` | | `{state: idle\|running\|verifying\|done\|failed, stage, done, total, image, recovery, started, eta_s, error, result, stuck}`; `stuck`: the update failed, or the CU is lost and answers without a version (stuck in its bootloader): only `recovery: true` gets it back |
 | `track.set` / `track.positions` / `track.clear` | see [Track connector](#track-connector-track-shape--positions) | publish the track shape and car positions |
 | `connector.set` / `connector.clear` | see [Connector card](#connector-card) | show or remove this connection's card in the UI |
 | `tower.reset` | | clear the position tower display |
@@ -103,7 +104,10 @@ or owned by an API agent, on a disabled driver, and while another `test.*` op or
 their end: over the WebSocket they are answered in the background, so `estop` sent
 meanwhile is processed at once (it ends the test early with `aborted: "estop"`).
 While a `test.*` op runs, `bot.*` ops on its slot are refused (the throttle cap cannot be bypassed from another page). While one runs, `state.hwtest` is `{kind, slot, phase}` (`null` otherwise) and `hwtest`
-events carry the phases (`run`, `paused`, `done`).
+events carry the phases (`run`, `paused`, `done`). `state.hwtest_why` is `{latency, move, handback}`: for
+each kind of test (`link.bench`; `test.pulse` and `test.lane`; `test.handback`) the reason code that
+forbids it right now, `null` when nothing does (the codes of the refusals above; a test already running is
+`state.hwtest`).
 
 Importing an image: `POST /api/firmware/upload?name=<file>.HMF` with the raw
 file as the body. During a flash, every command other than reads and
@@ -319,7 +323,11 @@ curl -X POST -H 'X-Agent: script' localhost:8130/api/bot.act -d '{"slot": 0, "th
 curl -X POST localhost:8130/api/estop
 ```
 
-Reply: `{"ok": true, "result": …}` or `{"ok": false, "error": "…"}` (HTTP 400).
+Reply: `{"ok": true, "result": …}` or `{"ok": false, "error": "…"}` (HTTP 400). `error` is English
+text. When the refusal has a stable reason, the reply also has `code` and `params` (the hardware tests'
+refusals: `link`, `bots`, `session`, `mode`, `estop`, `transport`, `bots_active`, `busy`, `slot_api`,
+`slot_bot`, `slot_disabled` (also from `bot.take` / `bot.claim`), `no_throttle`): a page words the
+code in its own language, an agent can branch on it.
 With REST the agent's identity is the `X-Agent` header; the dead-man switch
 applies in the same way (send `bot.act` again at least every 600 ms).
 

@@ -1,4 +1,4 @@
-"""CU firmware update: .HMF images, simulated bootloader, end-to-end flash."""
+"""CU firmware update: .HMF images, the update state machine, simulated bootloader, end-to-end flash."""
 
 from __future__ import annotations
 
@@ -16,9 +16,11 @@ from racelab.app import RaceLabApp
 from racelab.config import Config, SimConfig
 from racelab.cu import link as link_mod
 from racelab.cu import firmware as firmware_mod
-from racelab.cu.firmware import (KNOWN_IMAGES, PROJECT_FIRMWARE_DIR, FirmwareLibrary, ImageError,
-                                 KnownImage, parse_hmf)
+from racelab.cu.firmware import (KNOWN_IMAGES, PROJECT_FIRMWARE_DIR, VERIFY_TIMEOUT_S, FirmwareLibrary,
+                                 FirmwareUpdate, ImageError, KnownImage, parse_hmf)
 from racelab.cu.unit import RaceControlUnit
+from racelab.errors import OpError
+from racelab.events import FirmwareProgress, LinkState
 from racelab.sim import Simulator
 from racelab.sim import virtual_cu
 
@@ -185,6 +187,177 @@ def test_flash_reaches_the_bootloader(block):
     sim.close()
 
 
+# ------------------------------------------------------------ the update state machine (no app, no CU)
+
+
+class Update:
+    """A FirmwareUpdate on a library of one image, with a clock of its own, and what it asked of the
+    link (`flashed`), logged (`logs`) and published (`events`)."""
+
+    def __init__(self, tmp_path):
+        self.library = FirmwareLibrary(tmp_path / "fw", project_dir=tmp_path / "no-project")
+        self.image = self.library.add(SYNTHETIC, "bot.HMF")
+        self.now = 100.0
+        self.flashed, self.logs, self.events = [], [], []
+        self.fw = FirmwareUpdate(
+            self.library, lambda lines, recovery: self.flashed.append((len(lines), recovery)),
+            lambda level, text, key=None, /, **params: self.logs.append((level, key)),
+            lambda name, data: self.events.append((name, data["state"])), clock=lambda: self.now)
+
+    def start(self, image=None, **kw):
+        kw = {"recovery": False, "link_state": "connected", "version": "5338", **kw}
+        self.fw.start(image or self.image.id, **kw)
+
+    def progress(self, stage, done=0, error=None):
+        self.fw.on_progress(FirmwareProgress(stage, done, 897, error, self.now))
+
+    def reboot(self):
+        self.start()
+        self.progress("reboot", 897)
+
+
+@pytest.fixture
+def update(tmp_path):
+    return Update(tmp_path)
+
+
+def test_start_hands_the_image_to_the_link(update):
+    update.start()
+    fw = update.fw
+    assert update.flashed == [(897, False)] and fw.busy and fw.state == "running" and fw.total == 897
+    assert fw.status()["image"]["id"] == update.image.id
+    assert update.logs == [("warn", "fw_start")] and update.events == [("firmware", "running")]
+    assert not any(k.startswith("_") for k in fw.status())
+
+
+@pytest.mark.parametrize("kw, message", [
+    ({"link_state": "lost"}, "not connected"),
+    ({"link_state": "updating"}, "not connected"),
+    ({"version": "8339"}, "hardware 8"),   # STM32: the images are for hardware 5 (AVR)
+    ({"version": None}, "unknown"),
+])
+def test_start_refused_before_anything_is_sent(update, kw, message):
+    with pytest.raises(OpError, match=message):
+        update.start(**kw)
+    assert update.flashed == [] and update.logs == [] and update.events == [] and update.fw.state == "idle"
+
+
+def test_recovery_asks_nothing_of_the_cu(update):
+    update.start(recovery=True, link_state="lost", version=None)
+    assert update.flashed == [(897, True)] and update.logs == [("warn", "fw_start_recovery")]
+    assert update.fw.recovery is True and update.fw.busy
+
+
+def test_unknown_and_defective_images_are_refused_whatever_their_name(update, monkeypatch):
+    bad = hmf([b"0D" + b"%02X" % i + b"0039003A" for i in range(40)] + [b"00B8"])
+    monkeypatch.setitem(firmware_mod.KNOWN_IMAGES, hashlib.sha256(bad).hexdigest(),
+                        KNOWN_IMAGES["35f452f432cd1ee2443c7103d4ec49a3c91cdd2ac8cab247a40b1bb06bec71e6"])
+    info = update.library.add(bad, "V339_bot_fixed.HMF").info()  # a reassuring name changes nothing
+    assert info["status"] == "defective" and "event ring" in info["warning"]
+    with pytest.raises(OpError, match="not found"):
+        update.start("0" * 16)
+    for recovery in (False, True):  # recovery skips the CU's checks, never the image's
+        with pytest.raises(OpError, match="refused"):
+            update.start(info["id"], recovery=recovery)
+    assert update.flashed == [] and update.fw.state == "idle"
+
+
+def test_link_refusing_the_flash_leaves_the_state_alone(update):
+    def refuse(lines, recovery):
+        raise RuntimeError("an update is already in progress")
+    update.fw._flash = refuse
+    with pytest.raises(RuntimeError):
+        update.start()
+    assert update.fw.state == "idle" and update.logs == []
+
+
+def test_flash_then_reboot_then_the_cu_answers(update):
+    update.start()
+    fw = update.fw
+    update.now += 10
+    update.progress("write", 100)
+    assert fw.stage == "write" and fw.done == 100 and fw.eta_s == round(797 / (100 / 10))
+    update.progress("reboot", 897)
+    assert fw.state == "verifying" and fw.eta_s is None and fw.busy
+    fw.on_link(LinkState("connecting", "sim"))  # not back yet
+    assert fw.state == "verifying"
+    fw.on_link(LinkState("connected", "sim", version="5339", bots_supported=True, bot_module=True))
+    assert fw.state == fw.stage == "done" and not fw.busy and fw.error is None
+    assert fw.result == {"version": "5339", "bots_supported": True, "bot_module": True}
+    assert update.logs[-1] == ("info", "fw_done.module") and update.events[-1] == ("firmware", "done")
+    update.progress("write", 5)  # whatever arrives after the end is ignored
+    assert fw.state == "done" and fw.done == 897
+
+
+@pytest.mark.parametrize("module, key", [(True, "module"), (False, "no_module"), (None, "unknown")])
+def test_the_log_says_what_the_new_firmware_is(update, module, key):
+    update.reboot()
+    update.fw.on_link(LinkState("connected", "sim", version="5339", bots_supported=True, bot_module=module))
+    assert update.logs[-1] == ("info", f"fw_done.{key}")
+
+
+def test_a_cu_back_before_the_reboot_proves_nothing(update):
+    update.start()
+    update.fw.on_link(LinkState("connected", "sim", version="5338"))  # still flashing: the old link state
+    assert update.fw.state == "running" and update.fw.result is None
+
+
+def test_failure_reported_by_the_link(update):
+    update.start()
+    update.progress("write", 40)
+    update.progress("failed", 40, "failed (line 40/897): no response")
+    fw = update.fw
+    assert fw.state == "failed" and fw.error == "failed (line 40/897): no response" and not fw.busy
+    assert fw.stuck and update.logs[-1] == ("error", "fw_failed") and update.events[-1] == ("firmware", "failed")
+    update.start(recovery=True)  # a new run forgets the old one
+    assert fw.state == "running" and fw.error is None and fw.done == 0 and not fw.stuck
+
+
+def test_the_cu_that_never_comes_back_fails_the_update(update):
+    update.reboot()
+    update.fw.tick(update.now + VERIFY_TIMEOUT_S - 1)
+    assert update.fw.state == "verifying"
+    update.fw.tick(update.now + VERIFY_TIMEOUT_S + 1)
+    assert update.fw.state == "failed" and "does not answer" in update.fw.error
+    assert update.logs[-1] == ("error", "fw_failed")
+
+
+def test_the_timeout_counts_from_the_reboot_and_only_while_verifying(update):
+    update.start()
+    update.fw.tick(update.now + 10 * VERIFY_TIMEOUT_S)  # flashing takes as long as it takes
+    assert update.fw.state == "running"
+    update.now += 500
+    update.progress("reboot", 897)
+    update.fw.tick(update.now + 1)
+    assert update.fw.state == "verifying"
+
+
+def test_stuck_follows_the_link(update):
+    fw = update.fw
+    assert not fw.stuck and fw.status()["stuck"] is False
+    fw.on_link(LinkState("lost", "ble", error="the CU does not give its version", error_code="no_version"))
+    assert fw.stuck and fw.status()["stuck"] is True
+    fw.on_link(LinkState("lost", "ble", error="the CU does not answer at all (powered off?)"))
+    assert not fw.stuck  # no sign of a bootloader
+    fw.on_link(LinkState("lost", "ble", error="x", error_code="no_version"))
+    fw.on_link(LinkState("connected", "ble", version="5339"))
+    assert not fw.stuck
+
+
+def test_flash_op_gives_the_update_the_cu_it_has(tmp_path):
+    """The app's op passes the link's state and version (no CU, no event loop: the app is not started)."""
+    cfg = make_config(tmp_path)
+    cfg.connection.transport = "none"
+    app = RaceLabApp(cfg)
+    image = app.firmware_lib.images()[0].id
+    with pytest.raises(OpError, match="FLASH"):
+        app._op_fw_flash({"image": image}, "t")
+    app.link_info.update(state="connected", version="8339")
+    with pytest.raises(OpError, match="hardware 8"):
+        app._op_fw_flash({"image": image, "confirm": "flash"}, "t")
+    assert app.fw.state == "idle" and app._op_fw_status({}, "t") == app.fw.status()
+
+
 # ------------------------------------------------------------ end to end
 
 
@@ -245,29 +418,12 @@ def test_flash_stock_to_bot_firmware(tmp_path):
             assert r["ok"] and r["result"]["state"] == "running"
             blocked = await op(client, "race.setup", settings={"type": "practice"})
             assert blocked["ok"] is False and "firmware" in blocked["error"]
-            await wait_until(lambda: app.fw["state"] == "done")
-            assert app.fw["result"] == {"version": "5339", "bots_supported": True, "bot_module": True}
+            await wait_until(lambda: app.fw.state == "done")
+            assert app.fw.result == {"version": "5339", "bots_supported": True, "bot_module": True}
             assert app.link_info["bot_module"] is True and app.sim.flashed["lines"] == 897
             assert any(e["stage"] == "write" for e in events)
             # the CU answers normally again, bots included
             assert (await op(client, "bot.take", slot=0, driver="manual"))["ok"]
-        finally:
-            await app.stop()
-            await client.close()
-
-    run(main())
-
-
-def test_flash_refused_on_another_hardware(tmp_path):
-    """The images are for hardware 5 (AVR): a hardware-8 CU (STM32, version 8339) never gets one."""
-    async def main():
-        app, client = await started(make_config(tmp_path))
-        try:
-            app.link_info["version"] = "8339"
-            image = app.firmware_lib.images()[0]
-            r = await op(client, "firmware.flash", image=image.id, confirm="FLASH")
-            assert r["ok"] is False and "hardware 8" in r["error"]
-            assert app.fw["state"] != "running"
         finally:
             await app.stop()
             await client.close()
@@ -283,10 +439,10 @@ def test_abort_then_recovery(tmp_path):
         try:
             image = app.firmware_lib.images()[0]
             assert (await op(client, "firmware.flash", image=image.id, confirm="FLASH"))["ok"]
-            await wait_until(lambda: app.fw["done"] > 50)
+            await wait_until(lambda: app.fw.done > 50)
             assert (await op(client, "firmware.abort"))["ok"]
-            await wait_until(lambda: app.fw["state"] == "failed")
-            assert "interrupted" in app.fw["error"]
+            await wait_until(lambda: app.fw.state == "failed")
+            assert "interrupted" in app.fw.error and app.fw.stuck
             # the CU stayed in its bootloader: no version, the link drops
             await wait_until(lambda: app.link_info["state"] == "lost")
             assert app.sim.bootloader
@@ -294,7 +450,7 @@ def test_abort_then_recovery(tmp_path):
             assert normal["ok"] is False and "recovery" in normal["error"]
             r = await op(client, "firmware.flash", image=image.id, confirm="FLASH", recovery=True)
             assert r["ok"]
-            await wait_until(lambda: app.fw["state"] == "done")
+            await wait_until(lambda: app.fw.state == "done")
             assert not app.sim.bootloader and app.link_info["state"] == "connected"
         finally:
             await app.stop()
@@ -312,27 +468,6 @@ def test_upload_endpoint(tmp_path):
             good = await client.post("/api/firmware/upload?name=V339_bot.HMF", data=SYNTHETIC)
             info = (await good.json())["result"]
             assert info["lines"] == 897
-        finally:
-            await app.stop()
-            await client.close()
-
-    run(main())
-
-
-def test_defective_image_refused_whatever_its_name(tmp_path, monkeypatch):
-    bad = hmf([b"0D" + b"%02X" % i + b"0039003A" for i in range(40)] + [b"00B8"])
-    monkeypatch.setitem(firmware_mod.KNOWN_IMAGES, hashlib.sha256(bad).hexdigest(),
-                        KNOWN_IMAGES["35f452f432cd1ee2443c7103d4ec49a3c91cdd2ac8cab247a40b1bb06bec71e6"])
-
-    async def main():
-        app, client = await started(make_config(tmp_path))
-        try:
-            info = app.add_firmware(bad, "V339_bot_fixed.HMF")  # a reassuring name changes nothing
-            assert info["status"] == "defective" and "event ring" in info["warning"]
-            r = await op(client, "firmware.flash", image=info["id"], confirm="FLASH")
-            assert r["ok"] is False and "refused" in r["error"]
-            r = await op(client, "firmware.flash", image=info["id"], confirm="FLASH", recovery=True)
-            assert r["ok"] is False and app.fw["state"] == "idle"
         finally:
             await app.stop()
             await client.close()

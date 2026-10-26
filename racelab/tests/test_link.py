@@ -447,3 +447,26 @@ def test_bench_refused_on_a_closed_link(make_link):
     link.stop()
     with pytest.raises(ValueError):
         link.bench(5, lambda r, e: None)
+
+
+def test_a_cu_that_gives_no_version_is_lost_with_a_reason_code():
+    """What a CU left in its bootloader looks like: it connects, but never answers the version request."""
+    cu = FakeCU()
+
+    class NoVersion(FakeConnection):
+        def send(self, buf, offset=0, size=None):
+            super().send(buf, offset, size)
+            if bytes(buf)[:1] == b"0":
+                self.reply = None
+
+    events = []
+    link = CULink(lambda: NoVersion(cu), transport="sim", device=None,
+                  conn_cfg=ConnectionConfig(timeout=0.2, reconnect_delay=0.05), safety=SafetyConfig(),
+                  emit=events.append)
+    link.start()
+    try:
+        assert wait_for(lambda: any(isinstance(e, LinkState) and e.state == "lost" for e in events), 3.0)
+    finally:
+        link.stop()
+    lost = [e for e in events if isinstance(e, LinkState) and e.state == "lost"]
+    assert lost[0].error_code == "no_version" and "version" in lost[0].error

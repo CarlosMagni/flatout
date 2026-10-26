@@ -1,4 +1,4 @@
-"""CU firmware update images (.HMF files): reading and validation.
+"""CU firmware update: the images (.HMF files, reading and validation) and the update itself.
 
 The .HMF format is the one used by Carrera updates: one line per block, in
 ASCII hexadecimal between quotes. Its content is encoded by Carrera: it can't
@@ -14,8 +14,14 @@ import json
 import re
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+from ..errors import OpError
+from ..events import FirmwareProgress, LinkState
 
 MAX_FILE_BYTES = 512 * 1024
 MIN_LINES, MAX_LINES = 16, 4000
@@ -223,3 +229,109 @@ class FirmwareLibrary:
     def bot_line_digests(self) -> set[str]:
         """Digests of the known bot images (the simulator uses them for its restart)."""
         return {i.lines_digest for i in self.images() if i.known and i.known.bots}
+
+
+VERIFY_TIMEOUT_S = 45.0  # the CU must answer after its reboot
+
+
+class FirmwareUpdate:
+    """One CU firmware update, from the flash order to the check of the rebooted CU.
+
+    idle -> running (the link flashes: prepare, bootloader, write, reboot) -> verifying (the CU must
+    answer within VERIFY_TIMEOUT_S) -> done | failed. It does no I/O: `flash(lines, recovery)` hands
+    the image to the link, `log(level, text, key, **params)` and `event(name, data)` are the app's.
+    The app feeds it the link's messages (`on_progress`, `on_link`) and its clock (`tick`).
+    """
+
+    def __init__(self, library: FirmwareLibrary, flash: Callable[[list[bytes], bool], None],
+                 log: Callable[..., None], event: Callable[[str, dict[str, Any]], None],
+                 clock: Callable[[], float] = time.monotonic):
+        self._library, self._flash, self._log, self._event, self._clock = library, flash, log, event, clock
+        self._no_version = False  # the link is lost and the CU gave no version: stuck in its bootloader?
+        self._reset()
+
+    def _reset(self) -> None:
+        self.state = "idle"
+        self.stage: str | None = None
+        self.done = self.total = 0
+        self.image: dict[str, Any] | None = None
+        self.recovery = False
+        self.error: str | None = None
+        self.started: float | None = None
+        self.eta_s: int | None = None
+        self.result: dict[str, Any] | None = None
+        self._since = 0.0  # monotonic: start of the flash, then of the wait for the CU
+
+    @property
+    def busy(self) -> bool:
+        return self.state in ("running", "verifying")
+
+    @property
+    def stuck(self) -> bool:
+        """The CU may be waiting in its bootloader: only the recovery mode gets it back."""
+        return self.state == "failed" or self._no_version
+
+    def status(self) -> dict[str, Any]:
+        return {"state": self.state, "stage": self.stage, "done": self.done, "total": self.total,
+                "image": self.image, "recovery": self.recovery, "error": self.error,
+                "started": self.started, "eta_s": self.eta_s, "result": self.result, "stuck": self.stuck}
+
+    def start(self, image_id: str, *, recovery: bool, link_state: str, version: str | None) -> None:
+        """Flash the library image `image_id` on the CU in the state `link_state`, with `version`.
+        `recovery`: the CU stayed in its bootloader (an interrupted flash), nothing is asked of it."""
+        version = version or ""
+        if not recovery and link_state != "connected":
+            raise OpError("CU not connected (if it stayed in update mode: recovery mode)")
+        if not recovery and not version.startswith("5"):  # "8339": hardware 8 (STM32), firmware 339
+            raise OpError(f"this CU is hardware {version[:1] or '?'} (version {version or 'unknown'}): "
+                          "the images are for hardware 5 only")
+        try:
+            image = self._library.get(image_id)
+        except ImageError as e:
+            raise OpError(str(e)) from None
+        if image.known and image.known.status == "defective":
+            raise OpError(f"image {image.sha256[:8]}… refused: {image.known.warning}")
+        self._flash(image.lines, recovery)
+        self._reset()
+        self.state, self.stage, self.total, self.image = "running", "prepare", len(image.lines), image.info()
+        self.recovery, self.started, self._since = recovery, time.time(), self._clock()
+        self._log("warn", f"Firmware update: {image.name} ({len(image.lines)} lines"
+                          f"{', recovery' if recovery else ''})",
+                  "fw_start_recovery" if recovery else "fw_start", name=image.name, lines=len(image.lines))
+        self._event("firmware", self.status())
+
+    def on_progress(self, msg: FirmwareProgress) -> None:
+        if not self.busy:
+            return
+        self.stage, self.done, self.total = msg.stage, msg.done, msg.total
+        if msg.stage == "write" and msg.done:
+            rate = msg.done / max(0.001, self._clock() - self._since)
+            self.eta_s = round((msg.total - msg.done) / rate) if rate > 0 else None
+        if msg.stage == "reboot":
+            self.state, self.eta_s, self._since = "verifying", None, self._clock()
+        elif msg.stage == "failed":
+            self._fail(msg.error or "failed")
+            return
+        self._event("firmware", self.status())
+
+    def on_link(self, st: LinkState) -> None:
+        self._no_version = st.state == "lost" and st.error_code == "no_version"
+        if st.state == "connected" and self.state == "verifying":
+            self.state, self.stage = "done", "done"
+            self.result = {"version": st.version, "bots_supported": st.bots_supported,
+                           "bot_module": st.bot_module}
+            bots = {True: "bot module detected", False: "firmware without bot module", None: "not probed"}
+            self._log("info", f"Firmware updated — CU v{st.version}, {bots[st.bot_module]}",
+                      "fw_done." + {True: "module", False: "no_module", None: "unknown"}[st.bot_module],
+                      version=st.version)
+            self._event("firmware", self.status())
+
+    def tick(self, now: float) -> None:
+        if self.state == "verifying" and now - self._since > VERIFY_TIMEOUT_S:
+            self._fail("the CU does not answer after the update: retry in recovery mode")
+
+    def _fail(self, error: str) -> None:
+        self.state, self.error, self.eta_s = "failed", error, None
+        self._log("error", f"Firmware update: {error}. The CU can still be re-flashed "
+                           f"(factory bootloader): retry, in recovery mode if needed.", "fw_failed", error=error)
+        self._event("firmware", self.status())

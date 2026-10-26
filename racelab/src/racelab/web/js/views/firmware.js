@@ -16,8 +16,6 @@ const STAGES = {
 };
 // seconds per line, measured on the principle of carreralib.fw (BLE: 5 F blocks + 1 E per line)
 const SECONDS_PER_LINE = { ble: 0.16, serial: 0.06, sim: 0.03 };
-// The server words its link errors in English: a link lost around a firmware update mentions "update".
-const UPDATE_MODE_ERROR = /update/i;
 
 function kib(bytes) {
   return t("fmt.kib", { n: Math.round(bytes / 1024) });
@@ -194,7 +192,7 @@ export class FirmwarePanel {
     const busy = fw.state === "running" || fw.state === "verifying";
     const sessionBusy = !IDLE_STATES.has(state.session?.state);
     const connected = link.state === "connected";
-    const stuck = fw.state === "failed" || (link.state === "lost" && UPDATE_MODE_ERROR.test(link.error || ""));
+    const stuck = !!fw.stuck; // the server's call: a failed update, or a CU that answers without a version
     if ((busy || stuck) && !this.opened) {
       this.opened = true; // unfold once; the user may fold it again
       this.el.open = true;

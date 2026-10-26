@@ -61,6 +61,7 @@ class LinkState:
     error: str | None = None
     bot_transport: str | None = None  # "C" (stock controller table) | "B" (bot module) | None
     bot_module: bool | None = None  # the bot firmware module answers B
+    error_code: str | None = None  # "no_version": the CU answers but gives no version (stuck in update mode?)
 
 
 @dataclass(frozen=True)

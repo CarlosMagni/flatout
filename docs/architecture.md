@@ -64,15 +64,34 @@ Hardware test bench (System tab, ops `link.bench` and `test.*`, see [api.md](api
 holds the latency statistics; `CULink.bench()` samples the poll round trips the link makes anyway
 (plus the `C` acknowledgement), and `CULink.pause_heartbeat()` / `resume_heartbeat()` hold the idle
 `C` heartbeat for the hand-back test (a deadline in the link thread, 3 s ceiling, cleared by E-STOP,
-link loss and expiry). The app owns the safety: a test takes a slot as a manual bot and always zeroes
-and releases it in a `finally`. Because these ops wait, the WebSocket answers `link.bench` and
-`test.*` in a background task (other ops keep their strict order), so STOP is never queued behind them;
-a closed client cancels its tests.
+link loss and expiry). The bench itself is `HwTestBench` (`racelab/hwtest.py`), which owns the safety
+and every limit: a test takes a slot as a manual bot and always zeroes and releases it in a `finally`.
+It knows the CU link (`app.cu`, the proxy that always points at the current link) and the bots; what
+depends on the rest of the app (link state, session, mode, driver list) it asks through one callback,
+`preconditions(scope, slot)`, which `RaceLabApp._hw_preconditions` implements. Because these ops wait,
+the WebSocket answers `link.bench` and `test.*` in a background task (other ops keep their strict order),
+so STOP is never queued behind them; a closed client cancels its tests.
+
+CU firmware update (`firmware.*`): `cu/firmware.py` holds the images (`FirmwareLibrary`) and the update
+itself, `FirmwareUpdate`: idle → running (the link flashes) → verifying (the rebooted CU must answer
+within 45 s) → done | failed. It does no I/O; the app hands it the link's messages (`on_progress`,
+`on_link`) and its clock (`tick`), and gives it `flash`, `log` and `event` callbacks. `app.py` keeps only
+what needs the rest of the app: the confirmation word, the session check, letting the bots go before the
+flash, and the op table.
+
+**Refusals carry a reason.** `OpError` (`racelab/errors.py`) has an English message and an optional
+`code` + `params`, sent in the error reply (see [api.md](api.md)) the way a log entry carries its `key`:
+the page words the code in its own language instead of matching English text. The hardware tests'
+codes are the keys `hw.why.<code>` of `web/js/i18n.js` (`tests/test_log_keys.py` checks both
+languages), and `state.hwtest_why` gives the code that forbids each test right now, so the System page
+does not re-derive it. Same for the link: `LinkState.error_code` (`no_version`: the CU answers but gives
+no version, the sign of a CU left in its bootloader) lets `state.firmware.stuck` replace a match on the
+English link error.
 
 ## 1. Link messages (`racelab/events.py`)
 
-`StatusMsg`, `TimerMsg`, `LinkState`, `LinkStats`, `BotSent`, `RawFrame`
-(see the file). Addresses are 0..7 (carreralib already removes the +1 of the
+`StatusMsg`, `TimerMsg`, `LinkState` (its `error` is English text; `error_code`, when set, is the
+stable reason), `LinkStats`, `BotSent`, `RawFrame` (see the file). Addresses are 0..7 (carreralib already removes the +1 of the
 wire format). `host_t` = `time.monotonic()` on reception.
 
 Start phases (`lights_for_phase`): 0 race/idle, 1 armed (5 red lights),
