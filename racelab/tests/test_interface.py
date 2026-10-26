@@ -313,7 +313,7 @@ def test_lane_press_is_held_for_one_rail_cycle(make_interface):
     timed = port.timed(0)
     t_on = next(t for t, state in timed if state == (7, True))
     t_off = next(t for t, state in timed if t > t_on and state == (7, False))
-    assert 0.11 <= t_off - t_press <= 0.3                    # 120 ms, from the press
+    assert 0.11 <= t_off - t_on <= 0.3                       # down 120 ms, from the frame that carries it
     assert t_on >= t_press
 
 

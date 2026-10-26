@@ -550,11 +550,18 @@ def test_c_lane_press_is_held_for_one_rail_cycle_and_only_for_bots(make_link):
     timed = cu.ctl_timed()
     t_on = next(t for t, f in timed if 0 in ctl_values(f)[1])
     t_off = next(t for t, f in timed if t > t_on and not ctl_values(f)[1])
-    # the 120 ms hold runs from the press, not from the frame: a press right behind another
-    # frame waits up to min_bot_interval_ms for its own, so the button is held that much less
-    assert 0.11 <= t_off - t_press <= 0.3
-    assert t_on >= t_press
+    assert 0.11 <= t_off - t_on <= 0.3                # down 120 ms, from the frame that carries the press
+    assert t_on >= t_press                            # (which may wait up to min_bot_interval_ms for its turn)
     assert all(4 not in ctl_values(f)[1] for _, f in timed)
+
+
+def test_c_lane_press_is_not_lost_to_a_long_min_gap(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", min_bot_interval_ms=150, heartbeat_ms=1000)
+    link.set_bot(0, 7)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][0] == 7)
+    link.lane(0)                                      # right behind a frame, the next one is 150 ms away
+    assert wait_for(lambda: any(0 in ctl_values(f)[1] for f in cu.ctl_frames()), 1.0)
 
 
 def test_c_estop_goes_out_at_once_and_holds(make_link):

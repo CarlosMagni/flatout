@@ -7,7 +7,8 @@ with these rules; they only differ in how a frame reaches the CU or the device:
   controller;
 - E-STOP and the "reconnect" hold force throttle 0 on every bot and refuse any other value until
   they are lifted; an E-STOP also goes out before anything else;
-- a lane press is held `LANE_PRESS_S`, longer than one rail cycle (~75 ms);
+- a lane press waits for a frame like any change, then the button is held `LANE_PRESS_S` from the
+  frame that carries it, longer than one rail cycle (~75 ms);
 - a `C` frame (6 controller values and the lane buttons) goes out at once when it changes, at least
   `min_gap_s` after the last one, else every `heartbeat_s` while a bot is driven: the CU, and the
   devices that follow its protocol, hand every slot back ~750 ms after the last frame;
@@ -35,7 +36,7 @@ from typing import NamedTuple
 from ..config import SafetyConfig
 from ..events import BOT_SLOTS
 
-LANE_PRESS_S = 0.12  # a lane press held at least one rail cycle (~75 ms), counted from the press
+LANE_PRESS_S = 0.12  # a lane press held at least one rail cycle (~75 ms), counted from its frame
 HB_PAUSE_MAX_S = 3.0  # hard ceiling of the hand-back test's heartbeat pause (it expires by itself)
 
 
@@ -69,8 +70,8 @@ class BotModel:
         self._target: list[int | None] = [None] * 6  # None = handed back to the controller
         self._holds: set[str] = set()  # "estop", "reconnect": throttle forced to 0
         self._urgent = False  # an E-STOP is waiting to go out
-        self._presses: set[int] = set()  # lane presses not yet turned into a held button
-        self._lane_until = [0.0] * 6  # lane button held until (monotonic)
+        self._presses: set[int] = set()  # lane presses waiting for a frame to carry them
+        self._lane_until = [0.0] * 6  # lane button held until (monotonic), from the frame that carried it
         self._hb_pause_until = 0.0  # hand-back test: no idle heartbeat until then, 0 = off
         self._last: tuple | None = None  # (values, lanes) of the last frame sent; None = device state unknown
         self._sent_at = 0.0
@@ -171,6 +172,7 @@ class BotModel:
         """The device was (re)opened: its state is unknown, the next frame has the bots at 0."""
         with self._lock:
             self._last, self._lane_until, self._hb_pause_until = None, [0.0] * 6, 0.0
+            self._presses.clear()  # a press from before the outage must not fire after it
 
     def frame(self, now: float, *, probe: bool = False) -> Frame | None:
         """The frame to send at `now`, or None. `probe`: also send an unchanged frame (the hardware
@@ -183,12 +185,10 @@ class BotModel:
                     self._zero_targets()  # the test is over (or forgotten): never resume at the old throttle
                 self._hb_pause_until = 0.0
             paused = self._hb_pause_until > 0.0
-            pressed = [s for s in self._presses if self._target[s] is not None]
-            self._presses = set()
-            for slot in pressed:
-                self._lane_until[slot] = now + LANE_PRESS_S
             values = tuple(self._target)
-            lanes = frozenset(s for s in BOT_SLOTS if self._lane_until[s] > now and values[s] is not None)
+            self._presses = {s for s in self._presses if values[s] is not None}  # handed back meanwhile: gone
+            lanes = frozenset(s for s in BOT_SLOTS
+                              if values[s] is not None and (s in self._presses or self._lane_until[s] > now))
             last, gap = self._last, now - self._sent_at
         if last is None:  # device state unknown: the app's bots start from 0
             return Frame(tuple(None if v is None else 0 for v in values), frozenset(), None)
@@ -204,6 +204,9 @@ class BotModel:
         """`frame` reached the CU or the device (`now` is when it was decided)."""
         with self._lock:
             self._last, self._sent_at = (frame.values, frame.lanes), now
+            for slot in frame.lanes & self._presses:  # the button is down from this frame
+                self._lane_until[slot] = now + LANE_PRESS_S
+            self._presses -= frame.lanes
 
     def final_frame(self) -> Frame:
         """On exit: every slot handed back, or the bots held at 0 (`[safety] release_on_exit`)."""

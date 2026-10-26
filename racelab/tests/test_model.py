@@ -96,6 +96,44 @@ def test_lane_press_is_held_from_the_press_and_only_for_a_bot():
     assert f.lanes == frozenset() and f.values[0] == 5
 
 
+def test_the_hold_counts_from_the_frame_that_carries_the_press():
+    """A press right behind a frame waits for the gap; the button is down 120 ms from its own frame."""
+    m = make(min_gap_s=0.07, heartbeat_s=10)
+    started(m)
+    m.set_bot(0, 5)
+    send(m, 0.08)
+    m.set_bot(0, 6)
+    m.lane(0)
+    assert send(m, 0.09) is None                            # the press waits for its frame
+    f = send(m, 0.151)
+    assert f.lanes == {0}
+    assert send(m, 0.151 + 0.118) is None                   # still down: 120 ms from this frame
+    assert send(m, 0.151 + 0.121).lanes == frozenset()
+
+
+def test_a_press_is_not_lost_to_a_long_gap():
+    """With a gap longer than the hold, the press still gets a frame to ride."""
+    m = make(min_gap_s=0.15, heartbeat_s=10)
+    started(m)
+    m.set_bot(0, 5)
+    send(m, 0.16)
+    m.lane(0)
+    assert send(m, 0.17) is None
+    assert send(m, 0.32).lanes == {0}
+    assert send(m, 0.32 + 0.16).lanes == frozenset()
+
+
+def test_a_press_before_a_reconnection_does_not_fire_after_it():
+    m = make()
+    t = started(m)
+    m.set_bot(0, 5)
+    m.lane(0)
+    m.forget()
+    send(m, t + 1.0)
+    f = send(m, t + 1.1)
+    assert f.values[0] == 5 and f.lanes == frozenset()
+
+
 def test_a_press_on_a_slot_handed_back_meanwhile_is_dropped():
     m = make()
     t = started(m)

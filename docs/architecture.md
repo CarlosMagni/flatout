@@ -72,7 +72,8 @@ between the two ways to the cars:
   (`clear_estop()`, `resume_bots()`: independent). An E-STOP sends a frame at once, before
   anything else and whatever the gap. A lost link or device zeroes the targets and holds, if
   a bot was driven;
-- a **lane press** is held 120 ms from the press, longer than a rail cycle (~75 ms);
+- a **lane press** waits for a frame like any change, then the button is held 120 ms from the
+  frame that carries it, longer than a rail cycle (~75 ms);
 - a **C frame** (`frame(now)` decides, `sent(frame, now)` records it once it went out) goes
   out when it changes, at least `min_gap_s` after the last, else every `heartbeat_s` while a
   bot is driven; the CU and the devices hand every slot back ~750 ms after the last frame;
