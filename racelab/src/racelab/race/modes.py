@@ -11,6 +11,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Free running, ranked by best lap, optional duration.",
         "advanced_only": False,
         "uses_lights": False,
+        "ranking": "best_lap",
+        "ends_on": "duration",
+        "duration_required": False,
         "params": ["duration_s"],
     },
     "qualifying": {
@@ -18,6 +21,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Time-limited, ranked by best lap; the lap in progress is completed.",
         "advanced_only": False,
         "uses_lights": False,
+        "ranking": "best_lap",
+        "ends_on": "duration",
+        "duration_required": True,
         "params": ["duration_s"],
     },
     "race": {
@@ -25,6 +31,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Lights start; first to complete the set number of laps wins.",
         "advanced_only": False,
         "uses_lights": True,
+        "ranking": "distance",
+        "ends_on": "laps",
+        "duration_required": False,
         "params": ["laps"],
     },
     "endurance": {
@@ -32,6 +41,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Fixed-duration race; most laps wins.",
         "advanced_only": False,
         "uses_lights": True,
+        "ranking": "distance",
+        "ends_on": "duration",
+        "duration_required": True,
         "params": ["duration_s"],
     },
     "elimination": {
@@ -39,6 +51,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "The last car is eliminated every N laps of the leader; the last one on track wins.",
         "advanced_only": False,
         "uses_lights": True,
+        "ranking": "distance",
+        "ends_on": "last_car",
+        "duration_required": False,
         "params": ["elim_every"],
     },
     "rival": {
@@ -46,6 +61,9 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Race against a car driven by the software.",
         "advanced_only": True,
         "uses_lights": True,
+        "ranking": "distance",
+        "ends_on": "laps",
+        "duration_required": False,
         "params": ["laps", "rival_slot", "rival_margin_pct"],
     },
     "training": {
@@ -53,14 +71,21 @@ SESSION_TYPES: dict[str, dict[str, Any]] = {
         "description": "Continuous running split into episodes of a few laps, for agents.",
         "advanced_only": True,
         "uses_lights": False,
+        "ranking": "best_lap",
+        "ends_on": None,
+        "duration_required": False,
         "params": ["episode_laps"],
     },
 }
 
-BEST_LAP_TYPES = frozenset({"practice", "qualifying", "training"})  # ranked by best lap
-LAP_TARGET_TYPES = frozenset({"race", "rival"})  # finish at the lap count
-TIMED_TYPES = frozenset({"practice", "qualifying", "endurance"})  # finish when the duration expires
-DURATION_REQUIRED_TYPES = frozenset({"qualifying", "endurance"})
+# The UI gets SESSION_TYPES in `meta`: these sets are derived from it, so the two cannot drift.
+# ranking: "best_lap" (fastest lap first) | "distance" (laps, then time).
+# ends_on: "laps" (first to `laps`) | "duration" (when `duration_s` expires; optional for practice)
+# | "last_car" (elimination) | None (never ends by itself).
+BEST_LAP_TYPES = frozenset(k for k, v in SESSION_TYPES.items() if v["ranking"] == "best_lap")
+LAP_TARGET_TYPES = frozenset(k for k, v in SESSION_TYPES.items() if v["ends_on"] == "laps")
+TIMED_TYPES = frozenset(k for k, v in SESSION_TYPES.items() if v["ends_on"] == "duration")
+DURATION_REQUIRED_TYPES = frozenset(k for k, v in SESSION_TYPES.items() if v["duration_required"])
 
 
 def format_duration(seconds: float) -> str:

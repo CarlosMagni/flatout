@@ -24,6 +24,7 @@ from racelab.race import (
     SessionSettings,
     TowerManager,
 )
+from racelab.race.modes import BEST_LAP_TYPES, DURATION_REQUIRED_TYPES, LAP_TARGET_TYPES, TIMED_TYPES
 
 START = ("press", BUTTON_START)
 B = 10_000  # the CU timestamps in the tests start at 10 s, after the GO
@@ -1414,10 +1415,17 @@ def test_session_types_metadata():
     }  # fmt: skip
     fields = set(SessionSettings().to_dict())
     for meta in SESSION_TYPES.values():
-        assert set(meta) == {"label", "description", "advanced_only", "uses_lights", "params"}
+        assert set(meta) == {"label", "description", "advanced_only", "uses_lights", "ranking", "ends_on", "duration_required", "params"}
+        assert meta["ranking"] in ("best_lap", "distance") and meta["ends_on"] in ("laps", "duration", "last_car", None)
         assert set(meta["params"]) <= fields and meta["description"].endswith(".")
     assert {k for k, v in SESSION_TYPES.items() if v["advanced_only"]} == {"rival", "training"}
     assert {k for k, v in SESSION_TYPES.items() if v["uses_lights"]} == {"race", "endurance", "elimination", "rival"}
+    # the rule sets are derived from the metadata the UI receives
+    assert BEST_LAP_TYPES == {"practice", "qualifying", "training"}
+    assert LAP_TARGET_TYPES == {"race", "rival"}
+    assert TIMED_TYPES == {"practice", "qualifying", "endurance"}
+    assert DURATION_REQUIRED_TYPES == {"qualifying", "endurance"}
+    assert SESSION_TYPES["elimination"]["ends_on"] == "last_car" and SESSION_TYPES["training"]["ends_on"] is None
 
 
 def test_settings_defaults_roundtrip_and_unknown_keys():

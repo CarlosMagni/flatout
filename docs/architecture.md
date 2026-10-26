@@ -188,7 +188,9 @@ class RaceEngine:
 `elim_every`, `episode_laps`, `rival_slot`, `rival_margin_pct`, `title`.
 Fuel is not one: the CU's fuel switch sets it, and nothing on the serial line
 can change it (the status reports it, `cu.fuel_mode`). `SESSION_TYPES`: metadata for the UI (label, description,
-`advanced_only`, `uses_lights`, relevant parameters).
+`advanced_only`, `uses_lights`, relevant parameters, and the rules the views share: `ranking` `best_lap` | `distance`,
+`ends_on` `laps` | `duration` | `last_car` | none, `duration_required`). The engine's type sets (`BEST_LAP_TYPES`, `LAP_TARGET_TYPES`,
+`TIMED_TYPES`, `DURATION_REQUIRED_TYPES`) are derived from it, and the web UI reads it from `meta` instead of naming types.
 
 | type | UI name | lights | end | ranking |
 |---|---|---|---|---|
