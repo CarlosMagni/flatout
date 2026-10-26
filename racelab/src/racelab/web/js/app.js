@@ -100,15 +100,18 @@ function updateTopbar(state) {
         : t("mode.classic_hint");
   });
 
-  // firmware update: banner on every screen until it is finished
+  // firmware update, then a new RaceLab version: banner on every screen (System has both)
   const fw = state.firmware || {};
   const flashing = fw.state === "running" || fw.state === "verifying";
-  toggle(fwBanner, "hidden", !flashing);
-  toggle(document.body, "fw-on", flashing);
+  const newVersion = !!state.update?.available;
+  toggle(fwBanner, "hidden", !flashing && !newVersion);
+  toggle(document.body, "fw-on", flashing || newVersion);
   if (flashing) {
     setText(fwBanner, fw.state === "verifying"
       ? t("topbar.fw_verifying")
       : t("topbar.fw_progress", { done: fw.done, total: fw.total }));
+  } else if (newVersion) {
+    setText(fwBanner, t("topbar.update_available"));
   }
 
   const advanced = state.mode === "advanced";

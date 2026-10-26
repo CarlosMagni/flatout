@@ -12,13 +12,14 @@ import dataclasses
 import json
 import logging
 import os
+import subprocess
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit
 
-from . import __version__
+from . import __version__, update
 from .bots.manager import BotManager
 from .bots.brain import pilots_meta
 from .bots.profiles import PROFILE_LABELS, PROFILES
@@ -87,7 +88,9 @@ HW_REPORT_MAX = 200_000  # bytes
 # These ops wait (up to a few seconds): the WebSocket answers them in the background so that
 # STOP, sent by the same client meanwhile, is never queued behind them.
 LONG_OPS = frozenset({"link.bench", "test.pulse", "test.lane", "test.handback", "interface.bt_scan",
-                      "interface.pair"})
+                      "interface.pair", "update.check", "update.apply"})
+UPDATE_ERRORS = (OSError, RuntimeError, ValueError, subprocess.SubprocessError)  # offline, no git, GitHub down...
+UPDATE_EVERY_S = 6 * 3600  # an app left running checks again this often
 CONNECTOR_LIMITS = {"name": 40, "ui_url": 300, "status": 80}
 VERIFY_TIMEOUT_S = 45.0  # the CU must answer after its reboot
 
@@ -184,6 +187,8 @@ class RaceLabApp:
         self.link: Any = _IdleLink()
         self.interface: ControllerInterface | None = None
         self.request_quit: Callable[[], None] | None = None  # set by the launcher
+        self.restart = False  # the launcher starts RaceLab again once it has stopped (after an update)
+        self.update_info: dict[str, Any] | None = None  # the last update check
         self._build_link()
         self._build_interface()
         self.cu = _LinkProxy(self)
@@ -578,6 +583,7 @@ class RaceLabApp:
         snap["firmware"] = {k: v for k, v in self.fw.items() if not k.startswith("_")}
         snap["firmware_build"] = self._fw_build_info()
         snap["hwtest"] = dict(self._hw) if self._hw else None
+        snap["update"] = self.update_info
         if self.mode == "advanced":
             snap["bots"] = self.bots.snapshot(self.drive.bot_applied())
             by_slot = {b["slot"]: b for b in snap["bots"]}
@@ -1408,6 +1414,45 @@ class RaceLabApp:
         await self.set_interface(port)
         return dict(self.link_info)
 
+    async def check_updates(self) -> None:
+        """From launch (__main__), then every UPDATE_EVERY_S: a newer RaceLab is announced once in the
+        log, and shown on every page (snapshot `update`) until installed. Silent when it cannot tell."""
+        announced = None
+        while True:
+            try:
+                self.update_info = await asyncio.get_running_loop().run_in_executor(None, update.check)
+            except UPDATE_ERRORS:
+                pass
+            else:
+                if self.update_info["available"] and self.update_info["latest"] != announced:
+                    announced = self.update_info["latest"]
+                    self._log("info", "A new RaceLab version is available: System → Updates", "update_available")
+            await asyncio.sleep(UPDATE_EVERY_S)
+
+    async def _op_update_check(self, args, client):
+        try:
+            self.update_info = await self.loop.run_in_executor(None, update.check)
+        except UPDATE_ERRORS as e:
+            raise OpError(f"cannot check for updates: {e}") from None
+        return self.update_info
+
+    async def _op_update_apply(self, args, client):
+        if self.request_quit is None:
+            raise OpError("updating from the interface is unavailable")
+        if self.engine.state not in IDLE_STATES:
+            raise OpError("end the session before updating")
+        if self.fw["state"] in ("running", "verifying"):
+            raise OpError("firmware update in progress")
+        self._log("info", "Updating RaceLab…", "update_start")
+        try:
+            sha = await self.loop.run_in_executor(None, update.apply)
+        except UPDATE_ERRORS as e:
+            raise OpError(f"update failed: {e}") from None
+        self._log("info", f"Updated to {sha[:7]}: restarting", "update_done", version=sha[:7])
+        self.restart = True
+        self.loop.call_later(0.5, self.request_quit)  # time for the reply to go out
+        return {"version": sha}
+
     def _op_quit(self, args, client):
         if self.request_quit is None:
             raise OpError("quitting from the interface is unavailable")
@@ -1469,6 +1514,8 @@ class RaceLabApp:
         "interface.bt_scan": _op_interface_bt_scan,
         "interface.pair": _op_interface_pair,
         "app.quit": _op_quit,
+        "update.check": _op_update_check,
+        "update.apply": _op_update_apply,
         "firmware.images": _op_fw_images,
         "firmware.status": _op_fw_status,
         "firmware.flash": _op_fw_flash,

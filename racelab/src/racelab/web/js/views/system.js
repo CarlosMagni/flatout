@@ -93,6 +93,7 @@ export class SystemView {
     this.buildGarage();
     this.buildConsole();
     this.buildApi();
+    this.buildUpdate();
     this.buildConnectors();
     this.buildLog();
     this.fwPanel = new FirmwarePanel();
@@ -103,7 +104,7 @@ export class SystemView {
       h("h1.page", { text: t("nav.system") }),
       h("div.sys-cols", {},
         h("div.sys-col", {}, this.connPanel, this.buttonsPanel, this.consolePanel),
-        h("div.sys-col", {}, this.apiPanel, this.connectorsPanel, this.fwPanel.el)),
+        h("div.sys-col", {}, this.updatePanel, this.apiPanel, this.connectorsPanel, this.fwPanel.el)),
       this.hwPanel.el,
       this.logPanel,
       this.foot));
@@ -445,6 +446,49 @@ export class SystemView {
         h("li", {}, this.apiDeadman),
         this.apiAuthItem),
     ]);
+  }
+
+  // ------------------------------------------------------------ update (update.py)
+
+  buildUpdate() {
+    this.updateText = h("p.dim", { text: t("sys.update_checking") });
+    this.updateBtn = h("button.btn.primary.hidden", { type: "button", onclick: () => this.applyUpdate() }, t("sys.update_apply"));
+    this.updatePanel = panel(t("sys.update"), [this.updateText, this.updateBtn]);
+    this.checkUpdate();
+  }
+
+  async checkUpdate() {
+    const short = (sha) => (sha ? sha.slice(0, 7) : "?");
+    try {
+      const info = await request("update.check", {}, 30000);
+      setText(this.updateText, t(info.available ? "sys.update_available" : "sys.update_latest",
+        { current: short(info.current), latest: short(info.latest) }));
+      toggle(this.updateBtn, "hidden", !info.available);
+    } catch (e) {
+      setText(this.updateText, t("sys.update_error", { error: e.message }));
+    }
+  }
+
+  async applyUpdate() {
+    if (!(await confirmModal({ title: t("sys.update_apply"), text: t("sys.update_confirm") }))) return;
+    this.updateBtn.disabled = true;
+    setText(this.updateText, t("sys.update_running"));
+    try {
+      await request("update.apply", {}, 900000);
+    } catch (e) {
+      this.updateBtn.disabled = false;
+      setText(this.updateText, t("sys.update_error", { error: e.message }));
+      return;
+    }
+    setText(this.updateText, t("sys.update_restarting"));
+    // reload once the server has gone down and come back: the new version's page
+    let down = false;
+    const timer = setInterval(async () => {
+      try {
+        await fetch("/api/state", { cache: "no-store" });
+        if (down) { clearInterval(timer); location.reload(); }
+      } catch { down = true; }
+    }, 1000);
   }
 
   // ------------------------------------------------------------ connectors

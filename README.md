@@ -110,6 +110,9 @@ rights. On first launch, pick your CU — or **Virtual CU** to try without
 hardware. Step-by-step guide: [`docs/getting-started.md`](docs/getting-started.md)
 ([en français](docs/fr/getting-started.md)).
 
+**Updates:** RaceLab says in its log when a new version is out; **System → Updates** installs it
+and restarts. A download from before this feature needs one last manual download.
+
 From a terminal:
 
 ```bash

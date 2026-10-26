@@ -127,7 +127,7 @@ def running_instance(host: str, port: int) -> bool:
         return False
 
 
-async def serve(cfg, *, window: bool = False) -> None:
+async def serve(cfg, *, window: bool = False) -> bool:
     from .api.server import create_web_app
     from .app import RaceLabApp
 
@@ -149,6 +149,7 @@ async def serve(cfg, *, window: bool = False) -> None:
         await runner.cleanup()
         raise SystemExit(f"cannot listen on {cfg.app.host}:{cfg.app.port} ({e.strerror})")
     await app.start()
+    update_check = asyncio.create_task(app.check_updates())  # noqa: F841 (kept alive) in the background: GitHub may be slow
 
     mode = "advanced" if cfg.app.mode == "advanced" else "classic"
     print(f"RaceLab {__version__} · {mode} mode · CU: {app.link_info['transport']}")
@@ -176,6 +177,7 @@ async def serve(cfg, *, window: bool = False) -> None:
         print("\nStopping: throttle 0 on the bots, closing the link…")
         await app.stop()
         await runner.cleanup()
+    return app.restart
 
 
 def scan() -> None:
@@ -216,9 +218,12 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(f"config: {e}")
     setup_logging(args.verbose, cfg.data_path)
     try:
-        asyncio.run(serve(cfg, window=args.window))
+        restart = asyncio.run(serve(cfg, window=args.window))
     except KeyboardInterrupt:
-        pass  # Windows: Ctrl+C; the clean shutdown (bots stopped) is done in serve()
+        return  # Windows: Ctrl+C; the clean shutdown (bots stopped) is done in serve()
+    if restart:  # after an in-app update: the same command, the page already open reconnects
+        argv = [a for a in sys.argv[1:] if a != "--window"]
+        os.execv(sys.executable, [sys.executable, "-m", "racelab", *argv, "--no-browser"])
 
 
 if __name__ == "__main__":
