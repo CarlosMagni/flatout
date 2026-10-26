@@ -33,6 +33,7 @@ class FakePort:
 
     def __init__(self):
         self.frames: list[bytes] = []
+        self.times: list[float] = []  # when each frame was written (monotonic), parallel to `frames`
         self.inbox = bytearray()
         self.broken = False
         self.opens = 0
@@ -49,6 +50,7 @@ class FakePort:
             raise OSError("Bluetooth link dropped")
         with self.lock:
             self.frames.append(bytes(frame))
+            self.times.append(time.monotonic())
 
     def read(self, n):
         with self.lock:
@@ -66,6 +68,11 @@ class FakePort:
         """What the reference device (controller_interfaces/pico) makes of a frame."""
         with self.lock:
             return pico_main.parse(self.frames[i])
+
+    def timed(self, slot):
+        """(time, state of the slot as the device reads it) of every frame written so far."""
+        with self.lock:
+            return [(t, pico_main.parse(f)[slot]) for t, f in zip(self.times, self.frames)]
 
 
 @pytest.fixture
@@ -221,6 +228,124 @@ def test_cu_link_loss_holds_the_bots(make_interface):
     iface.on_cu_link("lost")
     assert wait_for(lambda: port.slots()[3] == (0, False))
     assert "reconnect" in iface.holds
+
+
+# ------------------------------------------------------------ the bot rules (the same as the CU link's, see test_link.py)
+
+def test_throttle_is_clamped_and_slots_validated(make_interface):
+    iface, port, _ = make_interface(max_throttle=10)
+    iface.set_bot(0, 99)                                     # above the ceiling
+    iface.set_bot(1, -4)                                     # below 0
+    assert iface.bot_targets()[:2] == [10, 0]
+    assert wait_for(lambda: port.frames and port.slots()[:2] == [(10, False), (0, False)])
+    iface.set_bot(1, None)                                   # handed back
+    assert iface.bot_targets()[1] is None
+    for bad in (-1, 6, 7):
+        with pytest.raises(ValueError):
+            iface.set_bot(bad, 1)
+        with pytest.raises(ValueError):
+            iface.lane(bad)
+
+
+def test_first_frame_after_open_starts_the_bots_from_zero(monkeypatch):
+    """The device's state is unknown when it opens: the app's bots start from 0, whatever was asked before."""
+    monkeypatch.setattr(SerialInterface, "RETRY_S", 0.05)
+    port = FakePort()
+    iface = SerialInterface("fake-port", SafetyConfig(), lambda e: None, opener=port.open)
+    iface.set_bot(2, 9)                                      # before the device is open
+    iface.start()
+    try:
+        assert wait_for(lambda: len(port.frames) >= 2)
+        assert port.slots(0) == [None, None, (0, False), None, None, None]
+        assert wait_for(lambda: port.slots()[2] == (9, False))
+    finally:
+        iface.stop()
+
+
+@pytest.mark.parametrize("heartbeat_ms", [100, 500, 5000])
+def test_unchanged_frame_repeats_every_100ms_whatever_safety_says(make_interface, heartbeat_ms):
+    """docs/controller-interface.md publishes 100 ms to device builders: [safety] heartbeat_ms does not move it."""
+    iface, port, _ = make_interface(heartbeat_ms=heartbeat_ms)
+    iface.set_bot(0, 7)
+    assert wait_for(lambda: port.frames and port.slots()[0] == (7, False))
+    time.sleep(0.6)
+    times = [t for t, state in port.timed(0) if state == (7, False)]
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert len(gaps) >= 4
+    assert min(gaps) >= 0.08 and max(gaps) <= 0.2, gaps
+
+
+def test_changes_are_coalesced_20ms_apart(make_interface):
+    iface, port, _ = make_interface()
+    iface.set_bot(0, 1)
+    assert wait_for(lambda: port.frames and port.slots()[0] == (1, False))
+    base = len(port.frames)
+    for v in range(2, 15):                                   # thirteen changes in ~30 ms
+        iface.set_bot(0, v)
+        time.sleep(0.002)
+    assert wait_for(lambda: port.slots()[0] == (14, False))
+    timed = port.timed(0)
+    last = next(i for i, (_, state) in enumerate(timed) if state == (14, False))
+    times = [t for t, _ in timed[base - 1:last + 1]]            # from the frame before the burst
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert len(times) <= 5 and all(g >= 0.015 for g in gaps), gaps
+
+
+def test_lane_press_is_held_for_one_rail_cycle(make_interface):
+    iface, port, _ = make_interface()
+    iface.set_bot(0, 7)
+    assert wait_for(lambda: port.frames and port.slots()[0] == (7, False))
+    t_press = time.monotonic()
+    iface.lane(0)
+    assert wait_for(lambda: any(state == (7, True) for _, state in port.timed(0)))
+    assert wait_for(lambda: port.slots()[0] == (7, False), 1.0)
+    timed = port.timed(0)
+    t_on = next(t for t, state in timed if state == (7, True))
+    t_off = next(t for t, state in timed if t > t_on and state == (7, False))
+    assert 0.11 <= t_off - t_press <= 0.3                    # 120 ms, from the press
+    assert t_on >= t_press
+
+
+def test_bot_sent_events_follow_the_changes(make_interface):
+    """What the recording gets: a BotSent when a slot's value or lane changes, not on every heartbeat."""
+    iface, port, events = make_interface()
+    assert wait_for(lambda: port.frames)
+
+    def sent():
+        return [(e.slot, e.value, e.lane) for e in events if isinstance(e, BotSent)]
+
+    iface.set_bot(2, 9)
+    assert wait_for(lambda: port.slots()[2] == (9, False))
+    time.sleep(0.4)                                          # ~4 heartbeats
+    assert sent() == [(2, 9, False)]
+    iface.lane(2)
+    assert wait_for(lambda: len(sent()) == 3 and port.slots()[2] == (9, False), 1.0)
+    assert sent() == [(2, 9, False), (2, 9, True), (2, 9, False)]
+    iface.estop()
+    assert wait_for(lambda: sent()[-1] == (2, 0, False))
+
+
+def test_holds_only_when_a_bot_is_driven_and_are_independent(make_interface, monkeypatch):
+    monkeypatch.setattr(SerialInterface, "SILENT_S", 0.2)
+    iface, port, events = make_interface()
+    assert wait_for(lambda: iface.state == "connected")
+    iface.on_cu_link("lost")                                 # nobody driven: nothing to hold
+    assert iface.holds == frozenset()
+    port.say(b"pico sync=on\n")                              # a device that went silent is lost, still no bot
+    assert wait_for(lambda: "lost" in states(events), 1.5)
+    assert iface.holds == frozenset()
+    assert wait_for(lambda: iface.state == "connected")
+    iface.set_bot(0, 5)
+    assert wait_for(lambda: port.slots()[0] == (5, False))
+    iface.on_cu_link("connected")                            # only a lost CU link holds
+    assert iface.holds == frozenset() and iface.bot_targets()[0] == 5
+    iface.estop()
+    iface.on_cu_link("lost")
+    assert iface.holds == {"estop", "reconnect"}
+    iface.resume_bots()                                      # lifts the reconnect hold only
+    assert iface.holds == {"estop"}
+    iface.clear_estop()
+    assert iface.holds == frozenset()
 
 
 def test_bluetooth_pairing_through_blueutil(monkeypatch):

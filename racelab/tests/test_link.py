@@ -12,7 +12,7 @@ from carreralib.connection import Connection, ConnectionError
 from racelab.config import ConnectionConfig, SafetyConfig
 from racelab.cu.link import CULink
 from racelab.cu.unit import RaceControlUnit, parse_message
-from racelab.events import LinkState, StatusMsg, TimerMsg
+from racelab.events import BotSent, LinkState, StatusMsg, TimerMsg
 
 
 class FakeCU:
@@ -23,6 +23,7 @@ class FakeCU:
         self.version = version
         self.ctl = ctl  # the CU (and its adapter) accepts the C table
         self.frames: list[bytes] = []
+        self.times: list[float] = []  # when each frame arrived (monotonic), parallel to `frames`
         self.timers: list[tuple[int, int, int]] = []
         self.lock = threading.Lock()
         self.broken = False
@@ -42,6 +43,10 @@ class FakeCU:
         with self.lock:
             return [f for f in self.frames if f[:1] == b"C"]
 
+    def ctl_timed(self):
+        with self.lock:
+            return [(t, f) for t, f in zip(self.times, self.frames) if f[:1] == b"C"]
+
 
 class FakeConnection(Connection):
     def __init__(self, cu: FakeCU):
@@ -56,6 +61,7 @@ class FakeConnection(Connection):
         buf = bytes(buf)
         with self.cu.lock:
             self.cu.frames.append(buf)
+            self.cu.times.append(time.monotonic())
         letter = buf[:1]
         if letter == b"0":
             self.reply = protocol.pack("c4sC", b"0", self.cu.version)
@@ -104,7 +110,7 @@ def make_link():
     def make(cu, bot_transport="B", **safety):
         """bot_transport "B" by default: most tests here check the bot module's protocol."""
         events = []
-        s = SafetyConfig(heartbeat_ms=200, min_bot_interval_ms=40, **safety)
+        s = SafetyConfig(**{"heartbeat_ms": 200, "min_bot_interval_ms": 40, **safety})
         link = CULink(cu.connect, transport="sim", device=None,
                       conn_cfg=ConnectionConfig(timeout=0.2, reconnect_delay=0.05,
                                                 bot_transport=bot_transport),
@@ -470,3 +476,194 @@ def test_a_cu_that_gives_no_version_is_lost_with_a_reason_code():
         link.stop()
     lost = [e for e in events if isinstance(e, LinkState) and e.state == "lost"]
     assert lost[0].error_code == "no_version" and "version" in lost[0].error
+
+
+# ------------------------------------------------------------ the bot rules, on the wire (B and C)
+#
+# The same rules hold for the controller interface (test_interface.py) and live in racelab/drive/model.py:
+# these tests pin them down from the outside, for both transports of the CU link.
+
+def test_set_bot_clamps_and_validates(make_link):
+    cu = FakeCU()
+    link, _ = make_link(cu, max_throttle=10)
+    link.set_bot(0, 99)                               # above the ceiling
+    link.set_bot(1, -4)                               # below 0
+    assert link.bot_targets()[:2] == [10, 0]
+    assert wait_for(lambda: b"B0:" in cu.bot_frames() and b"B10" in cu.bot_frames())
+    link.set_bot(1, None)                             # handed back
+    assert link.bot_targets()[1] is None
+    for bad in (-1, 6, 7):
+        with pytest.raises(ValueError):
+            link.set_bot(bad, 1)
+        with pytest.raises(ValueError):
+            link.lane(bad)
+
+
+def test_c_set_bot_clamps(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", max_throttle=10)
+    link.set_bot(0, 99)
+    link.set_bot(1, -4)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][:2] == [10, 0])
+    assert link.bot_targets()[:2] == [10, 0]
+
+
+@pytest.mark.parametrize("heartbeat_ms, expected_s", [(500, 0.3), (200, 0.2)])
+def test_c_heartbeat_is_capped_at_300ms(make_link, heartbeat_ms, expected_s):
+    """An unchanged C frame repeats every min([safety] heartbeat_ms, 300 ms): the CU drops the table after ~750 ms."""
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", heartbeat_ms=heartbeat_ms)
+    link.set_bot(0, 5)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][0] == 5)
+    time.sleep(1.3)
+    times = [t for t, f in cu.ctl_timed() if ctl_values(f)[0][0] == 5]
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert len(gaps) >= 2
+    assert min(gaps) >= expected_s - 0.03 and max(gaps) <= expected_s + 0.12, gaps
+
+
+def test_c_changes_are_coalesced_by_the_min_gap(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", min_bot_interval_ms=100)
+    link.set_bot(2, 1)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 1)
+    base = len(cu.ctl_frames())
+    for v in range(2, 12):                            # ten changes in ~50 ms
+        link.set_bot(2, v)
+        time.sleep(0.005)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 11)
+    burst = cu.ctl_timed()[base - 1:]                 # from the frame before the burst
+    assert len(burst) <= 3, burst
+    gaps = [b[0] - a[0] for a, b in zip(burst, burst[1:])]
+    assert all(g >= 0.09 for g in gaps), gaps
+
+
+def test_c_lane_press_is_held_for_one_rail_cycle_and_only_for_bots(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(0, 7)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][0] == 7)
+    link.lane(4)                                      # a human slot: ignored
+    t_press = time.monotonic()
+    link.lane(0)
+    assert wait_for(lambda: any(0 in ctl_values(f)[1] for f in cu.ctl_frames()))
+    assert wait_for(lambda: not ctl_values(cu.ctl_frames()[-1])[1], 1.0)
+    timed = cu.ctl_timed()
+    t_on = next(t for t, f in timed if 0 in ctl_values(f)[1])
+    t_off = next(t for t, f in timed if t > t_on and not ctl_values(f)[1])
+    # the 120 ms hold runs from the press, not from the frame: a press right behind another
+    # frame waits up to min_bot_interval_ms for its own, so the button is held that much less
+    assert 0.11 <= t_off - t_press <= 0.3
+    assert t_on >= t_press
+    assert all(4 not in ctl_values(f)[1] for _, f in timed)
+
+
+def test_c_estop_goes_out_at_once_and_holds(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", min_bot_interval_ms=500)   # only E-STOP may jump this gap
+    link.set_bot(1, 12)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 12)
+    n = len(cu.frames)
+    link.set_bot(1, 5)
+    link.estop()
+    assert wait_for(lambda: any(f[:1] == b"C" for f in cu.frames[n:]), 0.15)   # not at the 300/500 ms mark
+    after = cu.frames[n:]
+    first = next(i for i, f in enumerate(after) if f[:1] == b"C")
+    assert after[:first].count(b"?") <= 1             # at most the poll already in progress
+    assert ctl_values(after[first])[0] == [None, 0, None, None, None, None]
+    assert link.holds == {"estop"}
+    link.set_bot(1, 9)                                # refused while the E-STOP is engaged
+    time.sleep(0.1)
+    assert link.bot_targets()[1] == 0
+    link.clear_estop()
+    assert link.holds == frozenset()
+    link.set_bot(1, 6)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 6)
+
+
+def test_c_reconnect_zeroes_the_bots_then_holds_until_resume(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(2, 11)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 11)
+    cu.broken = True
+    assert wait_for(lambda: link.state == "lost")
+    assert link.holds == {"reconnect"} and link.bot_targets()[2] == 0
+    link.set_bot(2, 11)                               # the app insists during the outage
+    n = len(cu.frames)
+    cu.broken = False
+    assert wait_for(lambda: link.state == "connected")
+    time.sleep(0.2)
+    after = [f for f in cu.frames[n:] if f[:1] == b"C"]
+    assert ctl_values(after[0])[0] == [None, None, 0, None, None, None]    # first frame: 0 for the bot
+    assert all(ctl_values(f)[0][2] == 0 for f in after)                    # never resumed at 11
+    link.resume_bots()
+    link.set_bot(2, 8)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 8)
+
+
+@pytest.mark.parametrize("transport", ["B", "auto"])
+def test_link_loss_holds_only_when_a_bot_was_active(make_link, transport):
+    cu = FakeCU(bots=transport == "B")
+    link, _ = make_link(cu, bot_transport=transport)
+    cu.broken = True
+    assert wait_for(lambda: link.state == "lost")
+    assert link.holds == frozenset()                  # nobody was driven: nothing to hold
+    cu.broken = False
+    assert wait_for(lambda: link.state == "connected")
+    link.set_bot(0, 5)
+    assert link.bot_targets()[0] == 5
+
+
+def test_holds_are_independent(make_link):
+    cu = FakeCU()
+    link, _ = make_link(cu)
+    link.set_bot(0, 5)
+    link.estop()
+    cu.broken = True
+    assert wait_for(lambda: link.state == "lost")
+    assert link.holds == {"estop", "reconnect"}
+    cu.broken = False
+    assert wait_for(lambda: link.state == "connected")
+    link.resume_bots()                                # lifts the reconnect hold only
+    assert link.holds == {"estop"}
+    link.clear_estop()
+    assert link.holds == frozenset()
+
+
+def test_c_stop_hands_every_slot_back(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto")
+    link.set_bot(5, 7)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][5] == 7)
+    link.stop()
+    assert cu.ctl_frames()[-1][1:13] == b"0" * 12
+    assert link.unsafe_slots() == []
+
+
+def test_c_stop_can_hold_the_bots_at_zero(make_link):
+    cu = FakeCU(bots=False)
+    link, _ = make_link(cu, bot_transport="auto", release_on_exit=False)
+    link.set_bot(1, 6)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][1] == 6)
+    link.stop()
+    assert cu.ctl_frames()[-1][1:13] == b"00" + b"P0" + b"0" * 8     # slot 1 held at P0, the rest on their controllers
+
+
+def test_c_bot_sent_events(make_link):
+    """What the recording gets: one BotSent per slot per C frame, heartbeats included; the lane flag on the press."""
+    cu = FakeCU(bots=False)
+    link, events = make_link(cu, bot_transport="auto")
+    link.set_bot(2, 9)
+    assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 9)
+
+    def sent():
+        return [e for e in events if isinstance(e, BotSent) and e.slot == 2 and e.value == 9]
+
+    n = len(sent())
+    time.sleep(0.7)                                   # heartbeats every 200 ms
+    assert len(sent()) - n >= 2
+    link.lane(2)
+    assert wait_for(lambda: any(e.lane for e in sent()))
+    assert wait_for(lambda: not ctl_values(cu.ctl_frames()[-1])[1], 1.0)
+    assert sum(e.lane for e in sent()) == 1
