@@ -3,7 +3,8 @@
 A clone updates with git, fast-forward only, so local work is never touched. A download (the
 repository's zip, no .git) gets the zip of the latest commit over its folder, its .venv kept, and
 the commit it now holds is written to VERSION. Then the installer runs again (dependencies may have
-changed) and the app restarts (__main__).
+changed) and the app restarts (__main__). On Windows the installer runs only once the app has exited,
+since Windows locks a running program's files (`relaunch`, run as `python -m racelab.update`).
 """
 
 from __future__ import annotations
@@ -60,11 +61,33 @@ def apply() -> str:
         with urllib.request.urlopen(f"https://github.com/{REPO}/archive/{sha}.zip", timeout=120) as r:
             extract(r.read(), ROOT)
         VERSION.write_text(sha + "\n")
+    if sys.platform != "win32":  # Windows: in relaunch(), once this process is gone
+        install()
+    return sha
+
+
+def install() -> None:
     out = subprocess.run([sys.executable, str(ROOT / "install.py"), "--no-launcher"],
                          capture_output=True, text=True, timeout=900)
     if out.returncode:
         raise RuntimeError("the installer failed: " + (out.stdout + out.stderr).strip()[-300:])
-    return sha
+
+
+def relaunch(old_pid: int, command: list[str]) -> int:
+    """Windows, after an update: once the old RaceLab has exited, the installer, then RaceLab again.
+    It starts even if the installer failed (the error goes to update.log next to install.py)."""
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(0x00100000, False, old_pid)  # SYNCHRONIZE
+    if handle:
+        kernel32.WaitForSingleObject(handle, 30_000)
+        kernel32.CloseHandle(handle)
+    try:
+        install()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+        (ROOT / "update.log").write_text(str(e), encoding="utf-8")
+    return subprocess.call(command)
 
 
 def extract(data: bytes, root: Path) -> None:
@@ -78,3 +101,7 @@ def extract(data: bytes, root: Path) -> None:
             dest = root.joinpath(*parts)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(z.read(info))
+
+
+if __name__ == "__main__":  # python -m racelab.update <old pid> <command that starts RaceLab...>
+    sys.exit(relaunch(int(sys.argv[1]), sys.argv[2:]))

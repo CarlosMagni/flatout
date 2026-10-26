@@ -20,3 +20,7 @@ internal/
 # --- firmware build output (firmware/build.py)
 firmware/build/
 strategist/out/
+
+# in-app update (racelab/update.py): the commit of a download, the Windows installer output
+/VERSION
+/update.log

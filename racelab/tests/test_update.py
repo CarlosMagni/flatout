@@ -80,3 +80,41 @@ def test_update_ops(tmp_path, monkeypatch):
             await stopped(app, client)
 
     run(main())
+
+
+def test_windows_installs_only_after_the_app_has_exited(tmp_path, monkeypatch):
+    """Windows locks a running program's files: apply() leaves the installer to relaunch(), which
+    waits for the old process, installs, then starts RaceLab even when the installer failed."""
+    import ctypes
+    import subprocess
+    import sys
+
+    calls = []
+    monkeypatch.setattr(update, "ROOT", tmp_path)
+    monkeypatch.setattr(update, "_git", lambda *a, **k: "d" * 40)
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(update, "install", lambda: calls.append("install"))
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert update.apply() == "d" * 40 and calls == []             # not while this process runs
+
+    class Kernel32:
+        def OpenProcess(self, access, inherit, pid):  # noqa: N802 (Win32 names)
+            calls.append(("wait", pid))
+            return 7
+
+        def WaitForSingleObject(self, handle, ms):  # noqa: N802
+            calls.append("exited")
+
+        def CloseHandle(self, handle):  # noqa: N802
+            pass
+
+    def failing_install():
+        calls.append("install")
+        raise RuntimeError("numpy in use")
+
+    monkeypatch.setattr(ctypes, "windll", type("W", (), {"kernel32": Kernel32()})(), raising=False)
+    monkeypatch.setattr(update, "install", failing_install)
+    monkeypatch.setattr(subprocess, "call", lambda cmd: calls.append(("start", cmd)) or 0)
+    assert update.relaunch(1234, ["python", "-m", "racelab"]) == 0
+    assert calls == [("wait", 1234), "exited", "install", ("start", ["python", "-m", "racelab"])]
+    assert "numpy in use" in (tmp_path / "update.log").read_text()

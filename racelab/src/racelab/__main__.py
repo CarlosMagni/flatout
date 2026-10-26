@@ -224,7 +224,9 @@ def main(argv: list[str] | None = None) -> None:
     if restart:  # after an in-app update: the same command, the page already open reconnects
         argv = [sys.executable, "-m", "racelab", *(a for a in sys.argv[1:] if a != "--window"), "--no-browser"]
         if sys.platform == "win32":
-            subprocess.Popen(argv)  # os.execv does not quote arguments (paths with spaces) on Windows
+            # a new process (os.execv does not quote paths with spaces here), which first waits for this
+            # one to exit and runs the installer: Windows locks a running program's files
+            subprocess.Popen([sys.executable, "-m", "racelab.update", str(os.getpid()), *argv])
         else:
             os.execv(sys.executable, argv)  # the same process: macOS keeps its Bluetooth permission
 
