@@ -27,8 +27,9 @@ port = ""                # its serial port (USB, USB-serial, Bluetooth serial), 
 baud = 115200            # for a real UART; USB and Bluetooth serial ports ignore it
 
 [safety]
-heartbeat_ms = 500           # resend of the active bots' throttle
-min_bot_interval_ms = 70     # at most 1 throttle change per slot per rail cycle (75 ms)
+heartbeat_ms = 500           # resend of the active bots' throttle: B as is, the C table at most every 300 ms (min 100)
+min_bot_interval_ms = 70     # at most 1 throttle change per slot per rail cycle (75 ms), on the CU link (min 20);
+                             # a controller interface has its own fixed pace (20 ms, heartbeat 100 ms)
 deadman_ms = 600             # API agent silent for longer -> throttle 0
 release_on_exit = true       # on exit: throttle 0 then hand control back to the controller
 release_all_on_connect = true

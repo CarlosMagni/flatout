@@ -383,8 +383,7 @@ def test_heartbeat_pause_holds_the_idle_refresh_and_expires_by_itself(make_link)
 def test_heartbeat_pause_is_capped_at_three_seconds(make_link):
     link, _ = make_link(FakeCU(bots=False), bot_transport="auto")
     link.pause_heartbeat(60)
-    with link._lock:
-        assert link._hb_pause_until - time.monotonic() <= 3.0
+    assert link._bots.hb_pause_until - time.monotonic() <= 3.0
     link.resume_heartbeat()
     assert not link.hb_paused
 
@@ -651,19 +650,21 @@ def test_c_stop_can_hold_the_bots_at_zero(make_link):
 
 
 def test_c_bot_sent_events(make_link):
-    """What the recording gets: one BotSent per slot per C frame, heartbeats included; the lane flag on the press."""
+    """What the recording gets: a BotSent when a slot's value or lane changes, not on every heartbeat
+    (the controller interface's rule; the CU link used to record one per slot per C frame)."""
     cu = FakeCU(bots=False)
     link, events = make_link(cu, bot_transport="auto")
     link.set_bot(2, 9)
     assert wait_for(lambda: ctl_values(cu.ctl_frames()[-1])[0][2] == 9)
+    time.sleep(0.7)                                   # a few heartbeats (every 200 ms)
+    assert len(cu.ctl_frames()) >= 4
 
     def sent():
-        return [e for e in events if isinstance(e, BotSent) and e.slot == 2 and e.value == 9]
+        return [(e.slot, e.value, e.lane) for e in events if isinstance(e, BotSent)]
 
-    n = len(sent())
-    time.sleep(0.7)                                   # heartbeats every 200 ms
-    assert len(sent()) - n >= 2
+    assert sent() == [(2, 9, False)]
     link.lane(2)
-    assert wait_for(lambda: any(e.lane for e in sent()))
-    assert wait_for(lambda: not ctl_values(cu.ctl_frames()[-1])[1], 1.0)
-    assert sum(e.lane for e in sent()) == 1
+    assert wait_for(lambda: len(sent()) == 3, 1.0)
+    assert sent() == [(2, 9, False), (2, 9, True), (2, 9, False)]
+    link.estop()
+    assert wait_for(lambda: sent()[-1] == (2, 0, False))

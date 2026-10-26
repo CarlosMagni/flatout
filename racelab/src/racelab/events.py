@@ -88,7 +88,9 @@ class LinkStats:
 
 @dataclass(frozen=True)
 class BotSent:
-    """A B command actually acknowledged by the CU (for the UI/telemetry)."""
+    """A throttle (or hand-back, or lane press) actually put on the wire: a B command acknowledged by
+    the CU, or what a C frame changed for the slot, on the CU link or a controller interface
+    (for the UI/telemetry, and the session recording)."""
 
     slot: int
     value: int | None  # throttle 0..15, None = handed back to the controller

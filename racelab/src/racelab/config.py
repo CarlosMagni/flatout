@@ -68,8 +68,10 @@ class InterfaceConfig:
 
 @dataclass
 class SafetyConfig:
-    heartbeat_ms: int = 500  # resend of the active bots' throttle (docs/bot-protocol.md §1)
-    min_bot_interval_ms: int = 70  # ≥ 1 rail cycle (75 ms): changes are coalesced
+    # The CU link's pace; a controller interface's is fixed (20 ms between frames, 100 ms heartbeat:
+    # docs/controller-interface.md publishes it), and these two cannot go lower (validated below).
+    heartbeat_ms: int = 500  # resend of the active bots' throttle: B as is, the C table at most every 300 ms
+    min_bot_interval_ms: int = 70  # ≥ 1 rail cycle (75 ms): the CU link coalesces changes
     deadman_ms: int = 600  # API agent silent for longer -> throttle 0
     release_on_exit: bool = True  # on exit: throttle 0 then hand control back (A)
     release_all_on_connect: bool = True  # first connection: A on 0-5 (clean state)

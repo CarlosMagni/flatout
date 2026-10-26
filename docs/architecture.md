@@ -24,7 +24,9 @@ interface described here is made here first.
 
 - **A single thread talks to the CU** (`CULink`). It owns the carreralib
   connection, polls with `?`, sends queued commands with priorities, and handles
-  reconnection, firmware probing, heartbeat and the bot watchdog.
+  reconnection, firmware probing, heartbeat and the bot watchdog. The bot rules
+  themselves (clamping, E-STOP, holds, lane presses, when a frame goes out) are
+  `BotModel`'s (`drive/model.py`), the same code the controller interfaces run.
 - **All the logic lives in the asyncio loop**: race engine, bots, API. It
   receives the messages of `racelab/events.py` through
   `loop.call_soon_threadsafe`.
@@ -54,16 +56,57 @@ takes the bots instead when one is set (`[interface] port`, next to a real CU): 
 controller socket that plays the controllers, for CUs with neither `C` nor `B`. The bot
 manager talks to a proxy, `app.drive`, which is the interface when there is one and the CU
 link otherwise; both answer the same calls (`set_bot`, `lane`, `estop`, `clear_estop`,
-`resume_bots`). `ControllerInterface` holds the bot model and the safety rules (E-STOP
-first, throttle 0 and a hold on a lost interface or CU link, the release frame on exit) and
-runs its own thread, never waiting on the CU's polls. A subclass only implements `open`,
-`send`, `poll` and `close`: `SerialInterface` speaks the documented wire protocol over any
-serial port, with the device's report lines as diagnostics and heartbeat.
+`resume_bots`). `ControllerInterface` runs its own thread, never waiting on the CU's polls,
+and takes the bot model and the safety rules from `BotModel`. A subclass only implements
+`open`, `send`, `poll` and `close`: `SerialInterface` speaks the documented wire protocol
+over any serial port, with the device's report lines as diagnostics and heartbeat.
+
+### The bot model (`racelab/drive/model.py`)
+
+One `BotModel` per owner (`CULink`, `ControllerInterface`), so the safety rules cannot drift
+between the two ways to the cars:
+
+- a slot is a bot (throttle 0..15, clamped to `[safety] max_throttle`) or `None`, handed back
+  to its controller;
+- **E-STOP** and the **"reconnect" hold** force 0 and refuse any other throttle until lifted
+  (`clear_estop()`, `resume_bots()`: independent). An E-STOP sends a frame at once, before
+  anything else and whatever the gap. A lost link or device zeroes the targets and holds, if
+  a bot was driven;
+- a **lane press** is held 120 ms from the press, longer than a rail cycle (~75 ms);
+- a **C frame** (`frame(now)` decides, `sent(frame, now)` records it once it went out) goes
+  out when it changes, at least `min_gap_s` after the last, else every `heartbeat_s` while a
+  bot is driven; the CU and the devices hand every slot back ~750 ms after the last frame;
+- the first frame after a (re)connection (`forget()`) has the app's bots at 0, whatever was
+  asked before; the exit frame (`final_frame()`) hands every slot back, or holds the bots at 0
+  (`release_on_exit`);
+- the hand-back test's heartbeat pause lives here too: cleared by E-STOP, link loss, (re)open,
+  and by its own expiry, which zeroes the bots.
+
+What an owner decides, and why the two differ:
+
+| | `heartbeat_s` | `min_gap_s` | because |
+|---|---|---|---|
+| CU link, `C` | `min([safety] heartbeat_ms, 300 ms)` | `[safety] min_bot_interval_ms` | every frame costs a poll round trip on the shared link (~50 ms over the AppConnect): 300 ms leaves two missed frames before the CU's 750 ms expiry, and the gap paces the CU |
+| controller interface | 100 ms | 20 ms | its own thread and line, no round trip; Bluetooth serial drops frames, so more margin; [controller-interface.md](controller-interface.md) publishes both to device builders, and they are the lowest values `[safety]` accepts |
+
+The CU link's `B` module takes one command per slot, so its per-slot send rule (heartbeat
+`[safety] heartbeat_ms`, the module's watchdog being 1 s) stays in `CULink._service_bots`;
+it still reads targets, E-STOP flag and lane presses from the model (`take()`). The link also
+keeps what the CU acknowledged (`bot_applied()`, `unsafe_slots()`), as the interface does for
+its device.
+
+Threads: the app calls from any thread, the owner's I/O thread calls `frame`/`sent`/`take`. The
+model has its own lock and calls nothing while holding it (its `wake` callback, the link's wake
+event, runs once the lock is released); an owner may hold its own lock while calling in, never
+the reverse.
+
+`BotSent` (the session recording's `bot_tx`): on the C frames, one event per slot per change of
+value or lane button, heartbeats not recorded; on `B`, one per command, heartbeats included.
 
 Hardware test bench (System tab, ops `link.bench` and `test.*`, see [api.md](api.md)): `cu/bench.py`
 holds the latency statistics; `CULink.bench()` samples the poll round trips the link makes anyway
 (plus the `C` acknowledgement), and `CULink.pause_heartbeat()` / `resume_heartbeat()` hold the idle
-`C` heartbeat for the hand-back test (a deadline in the link thread, 3 s ceiling, cleared by E-STOP,
+`C` heartbeat for the hand-back test (a deadline in the bot model, 3 s ceiling, cleared by E-STOP,
 link loss and expiry). The bench itself is `HwTestBench` (`racelab/hwtest.py`), which owns the safety
 and every limit: a test takes a slot as a manual bot and always zeroes and releases it in a `finally`.
 It knows the CU link (`app.cu`, the proxy that always points at the current link) and the bots; what

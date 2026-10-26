@@ -183,6 +183,17 @@ def test_lost_port_zeroes_holds_and_never_resumes_the_old_throttle(make_interfac
     assert wait_for(lambda: port.slots()[1] == (8, False))
 
 
+def test_applied_is_unknown_once_the_port_is_lost(make_interface):
+    """Like the CU link's: after a loss nothing is known to be on the device (it hands the slots back by itself)."""
+    iface, port, events = make_interface()
+    iface.set_bot(1, 11)
+    assert wait_for(lambda: port.frames and port.slots()[1] == (11, False))
+    assert iface.bot_applied()[1] == 11
+    port.broken = True
+    assert wait_for(lambda: "lost" in states(events))
+    assert iface.bot_applied() == [None] * 6
+
+
 def test_a_device_that_reported_then_went_silent_is_lost(make_interface, monkeypatch):
     monkeypatch.setattr(SerialInterface, "SILENT_S", 0.2)
     iface, port, events = make_interface()

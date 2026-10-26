@@ -6,7 +6,8 @@ Responsibilities (docs/bot-protocol.md, safety rules):
 - command queue (buttons, position tower, programming);
 - bot throttle: coalescing (≤ 1 send per slot per rail cycle), heartbeat,
   priority E-STOP, throttle 0 forced on every reconnection, throttle 0 +
-  hand control back on shutdown.
+  hand control back on shutdown. The rules are drive/model.py's, shared with the
+  controller interfaces; here: how they reach the CU (C table, B module).
 
 All public methods are thread-safe and non-blocking; events are delivered
 via `emit` from the I/O thread.
@@ -27,6 +28,7 @@ from carreralib.connection import ConnectionError as CUConnectionError
 from carreralib.connection import TimeoutError as CUTimeoutError
 
 from ..config import ConnectionConfig, SafetyConfig
+from ..drive.model import BotModel
 from ..events import (
     BOT_SLOTS,
     BotSent,
@@ -43,10 +45,10 @@ from .unit import FORBIDDEN_LETTERS, CommandRejected, Parsed, RaceControlUnit
 logger = logging.getLogger(__name__)
 
 _UNKNOWN = object()  # throttle actually applied by the CU is unknown
-# C table (stock V339): the CU drops it ~750 ms after the last frame, so resend well before
+# C table (stock V339): the CU drops it ~750 ms after the last frame, so resend well before. Each frame
+# costs a poll round trip on this shared link (~50 ms over the AppConnect), which is why it is not the
+# interface's 100 ms; [safety] heartbeat_ms can only shorten it.
 CTL_HEARTBEAT_S = 0.3
-HB_PAUSE_MAX_S = 3.0  # hard ceiling of the hand-back test's heartbeat pause (it expires by itself)
-CTL_LANE_PRESS_S = 0.12  # lane button held for at least one rail cycle (75 ms)
 # firmware versions with the C table: added in V338, identical in V339 (V336/V337 do not
 # dispatch C); checked against the official images, V339 rebuilt in firmware/reconstruction
 CTL_FIRMWARES = ("338", "339")
@@ -108,15 +110,12 @@ class CULink:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-        # bots: desired (app) / applied (CU)
-        self._target: list[int | None] = [None] * 6  # None = slot handed back to the controller
+        # bots: desired (app, the shared model) / applied (CU)
+        self._bots = BotModel(safety, heartbeat_s=min(safety.heartbeat_ms / 1000, CTL_HEARTBEAT_S),
+                              min_gap_s=safety.min_bot_interval_ms / 1000, wake=self._wake.set)
         self._sent: list[object] = [_UNKNOWN] * 6  # int | None | _UNKNOWN
         self._sent_at = [0.0] * 6
         self._last_known: list[int | None] = [None] * 6  # last throttle actually acknowledged
-        self._lane: set[int] = set()
-        self._holds: set[str] = set()  # "estop", "reconnect": throttle forced to 0
-        self._urgent = False
-        self._hb_pause_until = 0.0  # hand-back test: no C heartbeat until then (monotonic), 0 = off
         self._bench: Bench | None = None
 
         self._high: deque[_Command] = deque()
@@ -129,9 +128,6 @@ class CULink:
         self.bots_supported: bool | None = None  # software drivers available (C or B)
         self.bot_transport: str | None = None  # "C" | "B" | None
         self.bot_module: bool | None = None  # the bot firmware module answers B
-        self._lane_until = [0.0] * 6  # C: lane button held until (monotonic)
-        self._ctl_last: object = None  # C: last frame sent (targets, lanes)
-        self._ctl_sent_at = 0.0
         self.trace = False  # raw frames to the console (excluding polls)
         self.trace_polls = False
 
@@ -158,35 +154,17 @@ class CULink:
 
     def set_bot(self, slot: int, value: int | None) -> None:
         """Desired throttle of the slot (0..15), or None to hand control back to the controller."""
-        if slot not in BOT_SLOTS:
-            raise ValueError("invalid bot slot")
-        if value is not None:
-            value = max(0, min(int(value), self._safety.max_throttle))
-        with self._lock:
-            if value is not None and self._holds:
-                value = 0
-            self._target[slot] = value
-        self._wake.set()
+        self._bots.set_bot(slot, value)
 
     def lane(self, slot: int) -> None:
-        if slot not in BOT_SLOTS:
-            raise ValueError("invalid bot slot")
-        with self._lock:
-            if self._target[slot] is not None:
-                self._lane.add(slot)
-        self._wake.set()
+        self._bots.lane(slot)
 
     def estop(self) -> None:
         """Emergency stop: throttle 0 on all active bots, before any other frame."""
-        with self._lock:
-            self._holds.add("estop")
-            self._zero_targets()
-            self._urgent = True
-        self._wake.set()
+        self._bots.estop()
 
     def clear_estop(self) -> None:
-        with self._lock:
-            self._holds.discard("estop")
+        self._bots.clear_estop()
 
     # ------------------------------------------------------------ hardware test (docs/api.md)
 
@@ -197,19 +175,14 @@ class CULink:
         zeroed, never resumed at their old throttle."""
         if self.bot_transport != "C":
             raise ValueError("heartbeat pause: only with the C command")
-        with self._lock:
-            self._hb_pause_until = time.monotonic() + max(0.0, min(float(seconds), HB_PAUSE_MAX_S))
-        self._wake.set()
+        self._bots.pause_heartbeat(seconds)
 
     def resume_heartbeat(self) -> None:
-        with self._lock:
-            self._hb_pause_until = 0.0
-        self._wake.set()
+        self._bots.resume_heartbeat()
 
     @property
     def hb_paused(self) -> bool:
-        with self._lock:
-            return self._hb_pause_until > time.monotonic()
+        return self._bots.hb_pause_until > time.monotonic()
 
     def bench(self, n: int, on_done: Callable[[dict, str | None], None]) -> None:
         """Time `n` round trips of the CU poll (see cu/bench.py); `on_done(result, error)` runs in the link thread."""
@@ -218,7 +191,7 @@ class CULink:
                 raise ValueError("CU not connected")
             if self._bench is not None:
                 raise RuntimeError("a latency test is already running")
-            idle = all(t is None for t in self._target)
+            idle = all(t is None for t in self._bots.targets())
             c_target = min(n, C_PROBES) if self.bot_transport == "C" and idle else 0
             self._bench = Bench(n, c_target, on_done)
         self._wake.set()
@@ -240,17 +213,14 @@ class CULink:
 
     def resume_bots(self) -> None:
         """Lift the hold set on reconnection (the app has acknowledged throttle 0)."""
-        with self._lock:
-            self._holds.discard("reconnect")
+        self._bots.resume()
 
     @property
     def holds(self) -> frozenset[str]:
-        with self._lock:
-            return frozenset(self._holds)
+        return self._bots.holds
 
     def bot_targets(self) -> list[int | None]:
-        with self._lock:
-            return list(self._target)
+        return self._bots.targets()
 
     def bot_applied(self) -> list[int | None]:
         with self._lock:
@@ -330,12 +300,6 @@ class CULink:
 
     # ------------------------------------------------------------ thread I/O
 
-    def _zero_targets(self) -> None:
-        self._hb_pause_until = 0.0  # E-STOP, link loss, pause expiry: the heartbeat is back
-        for slot in BOT_SLOTS:
-            if self._target[slot] is not None:
-                self._target[slot] = 0
-
     def _set_state(self, state: str, error: str | None = None, error_code: str | None = None) -> None:
         self.state = state
         self._emit(LinkState(state, self._transport, self._device, self.version,
@@ -368,11 +332,8 @@ class CULink:
                 self._set_state("lost", str(e))
             except (LinkLost, CUConnectionError, CommandRejected, OSError) as e:
                 logger.warning("CU link lost: %s", e)
+                self._bots.hold_at_zero()  # throttle 0 and hold until the app takes control again
                 with self._lock:
-                    # throttle 0 and hold until the app takes control again
-                    self._zero_targets()
-                    if any(t is not None for t in self._target):
-                        self._holds.add("reconnect")
                     self._sent = [_UNKNOWN] * 6
                 self._set_state("lost", str(e), getattr(e, "code", None))
             except Exception:
@@ -440,14 +401,13 @@ class CULink:
             self.bot_module = module
             self.bot_transport = transport
             self.bots_supported = transport is not None
-            target = list(self._target)
-            self._hb_pause_until = 0.0
-            self._ctl_last, self._lane_until = None, [0.0] * 6
+        self._bots.forget()
+        target = self._bots.targets()
         if transport == "C":
             # throttle 0 on the app's bots, every other slot on its controller
-            values = [0 if target[slot] is not None else None for slot in BOT_SLOTS]
+            frame = self._bots.frame(time.monotonic())
             try:
-                cu.setctl(values)
+                cu.setctl(list(frame.values))
             except CommandRejected:
                 # e.g. an adapter that filters C: fall back to the bot module if there is one
                 logger.error("the CU (or its adapter) rejects the C command")
@@ -456,10 +416,9 @@ class CULink:
                     self.bot_transport = transport
                     self.bots_supported = transport is not None
             else:
-                with self._lock:
-                    self._ctl_last, self._ctl_sent_at = (tuple(values), frozenset()), time.monotonic()
+                self._bots.sent(frame, time.monotonic())
                 for slot in BOT_SLOTS:
-                    self._mark_sent(slot, values[slot])
+                    self._mark_sent(slot, frame.values[slot])
                 if module and not self._ever_connected and self._safety.release_all_on_connect:
                     for slot in BOT_SLOTS:  # a previous B session may have left the module active
                         cu.botrelease(slot)
@@ -506,12 +465,10 @@ class CULink:
 
     def _service_bots(self, cu: RaceControlUnit) -> None:
         now = time.monotonic()
-        heartbeat = self._safety.heartbeat_ms / 1000
-        min_gap = self._safety.min_bot_interval_ms / 1000
+        heartbeat = self._safety.heartbeat_ms / 1000  # the module's watchdog is 1 s, the C table's 0.75 s
+        min_gap = self._bots.min_gap_s
+        urgent, lanes, target = self._bots.take()
         with self._lock:
-            urgent, self._urgent = self._urgent, False
-            lanes, self._lane = self._lane, set()
-            target = list(self._target)
             sent = list(self._sent)
             sent_at = list(self._sent_at)
         if urgent:
@@ -554,31 +511,12 @@ class CULink:
     def _service_ctl(self, cu: RaceControlUnit) -> None:
         """Software drivers through the stock C table: one frame for the 6 controllers."""
         now = time.monotonic()
-        heartbeat = min(self._safety.heartbeat_ms / 1000, CTL_HEARTBEAT_S)
-        min_gap = self._safety.min_bot_interval_ms / 1000
-        with self._lock:
-            urgent, self._urgent = self._urgent, False
-            if self._hb_pause_until and (urgent or now >= self._hb_pause_until):
-                if not urgent:
-                    self._zero_targets()  # the test is over (or forgotten): never resume at the old throttle
-                self._hb_pause_until = 0.0
-            paused = self._hb_pause_until > 0.0
-            pressed = {s for s in self._lane if self._target[s] is not None}
-            self._lane = set()
-            for slot in pressed:
-                self._lane_until[slot] = now + CTL_LANE_PRESS_S
-            target = tuple(self._target)
-            lanes = frozenset(s for s in BOT_SLOTS if self._lane_until[s] > now and target[s] is not None)
-            last, sent_at = self._ctl_last, self._ctl_sent_at
-        frame = (target, lanes)
-        active = any(t is not None for t in target)
         bench = self._bench
-        probe = bench is not None and not active and bench.wants_c_probe() and now - sent_at >= min_gap
-        if not (urgent or probe or (frame != last and now - sent_at >= min_gap)
-                or (active and not paused and now - sent_at >= heartbeat)):
+        frame = self._bots.frame(now, probe=bench is not None and bench.wants_c_probe())
+        if frame is None:
             return
         try:
-            cu.setctl(list(target), lanes)
+            cu.setctl(list(frame.values), frame.lanes)
         except CommandRejected:
             logger.error("the CU (or its adapter) rejects the C command")
             with self._lock:
@@ -587,15 +525,15 @@ class CULink:
                 self._sent = [_UNKNOWN] * 6
             self._set_state("connected", "C command rejected by the CU")
             return
-        with self._lock:
-            self._ctl_last, self._ctl_sent_at = frame, now
+        self._bots.sent(frame, now)
         if bench is not None and cu.last_rtt is not None:
             bench.c.append(cu.last_rtt)
         self._stats["bot"] += 1
         for slot in BOT_SLOTS:
-            if target[slot] is not None or last is None or last[0][slot] is not None:
-                self._mark_sent(slot, target[slot])
-                self._emit(BotSent(slot, target[slot], lane=slot in pressed, host_t=time.monotonic()))
+            if frame.values[slot] is not None or frame.prev is None or frame.prev[0][slot] is not None:
+                self._mark_sent(slot, frame.values[slot])
+        for slot, value, lane in frame.changes():
+            self._emit(BotSent(slot, value, lane=lane, host_t=time.monotonic()))
 
     def _send_bot(self, cu: RaceControlUnit, slot: int, value: int | None) -> None:
         try:
@@ -639,18 +577,16 @@ class CULink:
                 logger.exception("command callback")
 
     def _shutdown(self, cu: RaceControlUnit) -> None:
+        target = self._bots.targets()
         with self._lock:
-            active = [s for s in BOT_SLOTS if self._sent[s] is not None or self._target[s] is not None]
+            active = [s for s in BOT_SLOTS if self._sent[s] is not None or target[s] is not None]
             supported = self.bots_supported
             transport = self.bot_transport
         if not supported:
             return
         if transport == "C":
             try:
-                if self._safety.release_on_exit:
-                    cu.setctl([None] * 6)
-                else:
-                    cu.setctl([0 if s in active else None for s in BOT_SLOTS])
+                cu.setctl(list(self._bots.final_frame().values))
             except Exception:
                 logger.warning("could not release the C table (it expires by itself in ~0.75 s)")
             return
@@ -676,9 +612,7 @@ class CULink:
                 # nothing from the old session may be sent after the restart
                 self._high.clear()
                 self._low.clear()
-                self._lane.clear()
-                self._target = [None] * 6
-                self._holds.discard("reconnect")
+                self._bots.clear()
             if not job.recovery and self.bot_transport == "C":
                 cu.setctl([None] * 6)  # rails: no host value during the flash
             if not job.recovery and self.bot_module:

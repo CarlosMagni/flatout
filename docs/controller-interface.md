@@ -45,7 +45,7 @@ line:
 Example: `"C008150<0P0?09$` leaves 1 alone; drives 2 at 8 with the lane button held, 3 at 5,
 4 at 12, 5 at throttle 0 (held still), 6 at 15.
 
-Timing, as RaceLab sends it:
+Timing, as RaceLab sends it (fixed: `[safety]` does not move it, and they are the lowest values it accepts):
 - a change goes out at once (two frames at least 20 ms apart);
 - an unchanged frame is repeated every 100 ms while any slot is driven;
 - a lane press is held at least 120 ms, longer than one rail cycle (~75 ms);

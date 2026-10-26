@@ -59,8 +59,8 @@ The CU answers `C`.
 Each `C` frame reloads a countdown of 60 controller words, i.e. 10 rail cycles
 (about 750 ms). When it runs out, the CU clears the whole table: **every slot is
 back on its controller**. While a bot is active the application must therefore
-send a frame well within 750 ms, even if nothing changed (RaceLab: every 300 ms,
-and at once on any change).
+send a frame well within 750 ms, even if nothing changed (RaceLab: every 300 ms, or
+`[safety] heartbeat_ms` if shorter, and at once on any change).
 
 ### From the bot model to a frame
 
