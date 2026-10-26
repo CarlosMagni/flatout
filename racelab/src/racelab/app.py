@@ -502,6 +502,9 @@ class RaceLabApp:
             self.recorder.record(name, data, time.monotonic())
         if name == "false_start":
             self._log("warn", "False start!", "false_start")
+        elif name == "short_circuit":
+            self._log("warn", f"Short circuit: the CU cut the track (phase {data['phase']})", "short_circuit",
+                      phase=data["phase"])
         elif name == "finish" and data.get("position") == 1:
             self._log("info", f"Winner: {self._name(data['slot'])}", "winner",
                       name=self._name(data["slot"]), slot=data["slot"])
