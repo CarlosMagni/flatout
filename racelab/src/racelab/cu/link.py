@@ -389,6 +389,34 @@ class CULink:
         self._set_state("closed")
 
     def _session(self, cu: RaceControlUnit) -> None:
+        self._handshake(cu)
+        timeouts = 0
+        last_stats = time.monotonic()
+        while True:
+            if self._stop.is_set():
+                self._shutdown(cu)
+                return
+            if self._job is not None:
+                self._flash(cu, self._job)  # raises FirmwareFlashed / FirmwareFailed
+            try:
+                self._service(cu)
+                timeouts = 0
+                if self._wake.wait(POLL_PAUSE_S):
+                    self._wake.clear()
+            except CUTimeoutError as e:
+                timeouts += 1
+                if self._bench is not None:
+                    self._bench.lost += 1
+                logger.debug("CU timeout (%d): %s", timeouts, e)
+                if timeouts >= self._cfg.max_timeouts:
+                    raise LinkLost(f"{timeouts} missed replies") from e
+            now = time.monotonic()
+            if now - last_stats >= 1.0:
+                self._publish_stats(now - last_stats)
+                last_stats = now
+
+    def _handshake(self, cu: RaceControlUnit) -> None:
+        """Version, bot transport, and the bots back in a known state (throttle 0), before any poll."""
         try:
             self.version = cu.version()
         except (CommandRejected, CUTimeoutError) as e:
@@ -450,31 +478,6 @@ class CULink:
                     self._mark_sent(slot, None)
         self._ever_connected = True
         self._set_state("connected")
-
-        timeouts = 0
-        last_stats = time.monotonic()
-        while True:
-            if self._stop.is_set():
-                self._shutdown(cu)
-                return
-            if self._job is not None:
-                self._flash(cu, self._job)  # raises FirmwareFlashed / FirmwareFailed
-            try:
-                self._service(cu)
-                timeouts = 0
-                if self._wake.wait(POLL_PAUSE_S):
-                    self._wake.clear()
-            except CUTimeoutError as e:
-                timeouts += 1
-                if self._bench is not None:
-                    self._bench.lost += 1
-                logger.debug("CU timeout (%d): %s", timeouts, e)
-                if timeouts >= self._cfg.max_timeouts:
-                    raise LinkLost(f"{timeouts} missed replies") from e
-            now = time.monotonic()
-            if now - last_stats >= 1.0:
-                self._publish_stats(now - last_stats)
-                last_stats = now
 
     def _service(self, cu: RaceControlUnit) -> None:
         if self.bot_transport == "C":
