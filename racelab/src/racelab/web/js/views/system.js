@@ -453,17 +453,22 @@ export class SystemView {
   buildUpdate() {
     this.updateText = h("p.dim", { text: t("sys.update_checking") });
     this.updateBtn = h("button.btn.primary.hidden", { type: "button", onclick: () => this.applyUpdate() }, t("sys.update_apply"));
-    this.updatePanel = panel(t("sys.update"), [this.updateText, this.updateBtn]);
-    this.checkUpdate();
+    this.checkBtn = h("button.btn.sm", { type: "button", onclick: () => this.checkUpdate() }, t("sys.update_check"));
+    this.updatePanel = panel(t("sys.update"), [this.updateText, this.updateBtn], this.checkBtn);
+  }
+
+  // the server checks at launch and every 6 h (state.update); the button checks now
+  updateUpdate(info) {
+    if (this.updating) return;
+    const short = (sha) => (sha ? sha.slice(0, 7) : "?");
+    setText(this.updateText, !info ? t("sys.update_checking")
+      : t(info.available ? "sys.update_available" : "sys.update_latest", { current: short(info.current), latest: short(info.latest) }));
+    toggle(this.updateBtn, "hidden", !info?.available);
   }
 
   async checkUpdate() {
-    const short = (sha) => (sha ? sha.slice(0, 7) : "?");
     try {
-      const info = await request("update.check", {}, 30000);
-      setText(this.updateText, t(info.available ? "sys.update_available" : "sys.update_latest",
-        { current: short(info.current), latest: short(info.latest) }));
-      toggle(this.updateBtn, "hidden", !info.available);
+      this.updateUpdate(await request("update.check", {}, 30000));
     } catch (e) {
       setText(this.updateText, t("sys.update_error", { error: e.message }));
     }
@@ -471,11 +476,13 @@ export class SystemView {
 
   async applyUpdate() {
     if (!(await confirmModal({ title: t("sys.update_apply"), text: t("sys.update_confirm") }))) return;
+    this.updating = true;
     this.updateBtn.disabled = true;
     setText(this.updateText, t("sys.update_running"));
     try {
       await request("update.apply", {}, 900000);
     } catch (e) {
+      this.updating = false;
       this.updateBtn.disabled = false;
       setText(this.updateText, t("sys.update_error", { error: e.message }));
       return;
@@ -585,6 +592,7 @@ export class SystemView {
     this.updateLink(state);
     this.fwPanel.update(state);
     this.hwPanel.update(state);
+    this.updateUpdate(state.update);
     fillConnectors(this.connectorChips, state.connectors);
     toggle(this.connectorHint, "hidden", !!state.connectors?.length);
 
