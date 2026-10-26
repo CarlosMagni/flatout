@@ -222,8 +222,11 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         return  # Windows: Ctrl+C; the clean shutdown (bots stopped) is done in serve()
     if restart:  # after an in-app update: the same command, the page already open reconnects
-        argv = [a for a in sys.argv[1:] if a != "--window"]
-        os.execv(sys.executable, [sys.executable, "-m", "racelab", *argv, "--no-browser"])
+        argv = [sys.executable, "-m", "racelab", *(a for a in sys.argv[1:] if a != "--window"), "--no-browser"]
+        if sys.platform == "win32":
+            subprocess.Popen(argv)  # os.execv does not quote arguments (paths with spaces) on Windows
+        else:
+            os.execv(sys.executable, argv)  # the same process: macOS keeps its Bluetooth permission
 
 
 if __name__ == "__main__":

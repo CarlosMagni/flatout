@@ -1444,9 +1444,13 @@ class RaceLabApp:
         if self.fw["state"] in ("running", "verifying"):
             raise OpError("firmware update in progress")
         self._log("info", "Updating RaceLab…", "update_start")
+        self.bots.release_all()  # the CU is let go first, cleanly, not after minutes of download
+        await self._stop_interface()
+        await self.loop.run_in_executor(None, self.link.stop)
         try:
             sha = await self.loop.run_in_executor(None, update.apply)
         except UPDATE_ERRORS as e:
+            await self._relink(lambda: None)  # still the old version: back on the CU
             raise OpError(f"update failed: {e}") from None
         self._log("info", f"Updated to {sha[:7]}: restarting", "update_done", version=sha[:7])
         self.restart = True

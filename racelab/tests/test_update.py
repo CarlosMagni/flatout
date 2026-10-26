@@ -7,7 +7,7 @@ import zipfile
 
 from racelab import update
 
-from .test_api import make_config, op, run, started, stopped
+from .test_api import make_config, op, run, started, stopped, wait_until
 
 
 def zip_of(files: dict[str, bytes]) -> bytes:
@@ -39,13 +39,22 @@ def test_a_download_compares_its_version_file_with_github(tmp_path, monkeypatch)
 
 
 def test_update_ops(tmp_path, monkeypatch):
-    applied = []
+    applied, fail, link_alive, apps = [], [], [], []
+
+    def apply():
+        link_alive.append(apps[0].link._thread.is_alive())  # when the download starts
+        if fail:
+            raise RuntimeError("GitHub out of reach")
+        applied.append(1)
+        return "c" * 40
+
     monkeypatch.setattr(update, "check", lambda: {"method": "zip", "current": None, "latest": "c" * 40,
                                                   "available": True})
-    monkeypatch.setattr(update, "apply", lambda: applied.append(1) or "c" * 40)
+    monkeypatch.setattr(update, "apply", apply)
 
     async def main():
         app, client = await started(make_config(tmp_path))
+        apps.append(app)
         try:
             assert (await op(client, "update.check"))["result"]["available"] is True
             refused = await op(client, "update.apply")                    # no launcher to restart it
@@ -57,8 +66,16 @@ def test_update_ops(tmp_path, monkeypatch):
             busy = await op(client, "update.apply")                       # never during a session
             assert busy["ok"] is False and "session" in busy["error"] and not applied
             assert (await op(client, "race.stop"))["ok"]
+            fail.append(1)
+            old_link = app.link
+            failed = await op(client, "update.apply")                     # the CU was let go, then back
+            assert failed["ok"] is False and "GitHub" in failed["error"] and app.restart is False
+            assert app.link is not old_link
+            assert await wait_until(lambda: app.link_info["state"] == "connected")
+            fail.clear()
             r = await op(client, "update.apply")
             assert r["ok"] and r["result"] == {"version": "c" * 40} and app.restart is True
+            assert link_alive == [False, False]                                # the CU let go before
         finally:
             await stopped(app, client)
 
