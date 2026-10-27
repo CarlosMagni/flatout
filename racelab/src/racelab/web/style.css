@@ -1001,18 +1001,53 @@ body.bigscreen { background: #000; overflow: hidden; }
 /* live level programming (CU keys) */
 .live-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
 .live-name { min-width: 110px; opacity: .9; }
-.live-slider { flex: 1; max-width: 320px; accent-color: var(--accent, #6db3f2); }
+.live-slider { flex: 1; max-width: 320px; }
+/* the car setup sliders, flat: a thin dark track, its filled part (--fill, set by settings.js), a white knob;
+   red for the re-sync one, like the lights it moves */
+.live-slider, .recal-slider { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 999px;
+  margin: 8px 0; cursor: pointer; background: linear-gradient(to right, var(--fill-color, #e5e5ea) var(--fill, 50%),
+  #2e2e33 var(--fill, 50%)); }
+.recal-slider { --fill-color: #ff3b30; }
+.live-slider::-webkit-slider-thumb, .recal-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px;
+  height: 16px; border-radius: 50%; background: #f5f5f7; box-shadow: 0 1px 4px rgba(0, 0, 0, .55); }
+.live-slider::-moz-range-thumb, .recal-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0;
+  border-radius: 50%; background: #f5f5f7; box-shadow: 0 1px 4px rgba(0, 0, 0, .55); }
+.live-slider::-moz-range-track, .recal-slider::-moz-range-track { background: transparent; }
+.live-slider:focus-visible { outline: 2px solid var(--accent, #6db3f2); outline-offset: 4px; }
 .live-val { min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .live-actions { margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .live-hint { margin: 0; opacity: .85; font-size: .9rem; }
 
 .recal-btn { border: 1px solid currentColor; background: none; color: inherit; border-radius: 8px; cursor: pointer; padding: 1px 8px; opacity: .55; }
 .recal-btn:hover, .recal-btn.on { opacity: 1; }
-.recal-edit { display: inline-flex; align-items: center; gap: 6px; }
+.recal-edit { display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; margin: -2px 0 10px 122px; box-sizing: border-box; min-width: 0;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); }
 .recal-edit[hidden] { display: none; }
-.recal-sel { padding: 2px 4px; }
-.recal-ok { border: 0; background: none; color: #6ddf8f; cursor: pointer; font-size: 1.05rem; }
-.recal-no { border: 0; background: none; color: inherit; cursor: pointer; opacity: .55; font-size: 1.05rem; }
+.recal-hint { flex-basis: 100%; font-size: .85rem; line-height: 1.4; opacity: .9; }
+.recal-slider { flex: 1; min-width: 96px; max-width: 200px; }
+/* the CU's start-light bar while a level is open, in the app's flat style: five small red lenses spaced
+   along a dark bar (faint when off, lit with a soft glow when on); the level's own light blinks like the
+   CU's (calmer: ~1.6 Hz) */
+.level-lights { position: relative; overflow: hidden; gap: 18px; padding: 11px 18px 11px 34px;
+  border-radius: 999px; background: #0d0d0f; border: 1px solid var(--line); box-shadow: none; }
+/* the red and white stripe at the end of the CU's bar, flat */
+.level-lights::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 18px;
+  background: linear-gradient(135deg, #f2f2f2 0 48%, #ff3b30 48% 100%); }
+.level-lights .light { width: 10px; height: 10px; background: rgba(255, 59, 48, .12);
+  box-shadow: inset 0 0 0 1px rgba(255, 59, 48, .38); transition: background .12s, box-shadow .12s; }
+.level-lights .light.on { background: #ff3b30;
+  box-shadow: 0 0 0 1px rgba(255, 59, 48, .55), 0 0 10px 1px rgba(255, 59, 48, .6); }
+.level-lights .light.on.flash { animation: cu-blink .6s steps(1) infinite; }
+@keyframes cu-blink { 50% { background: rgba(255, 59, 48, .12); box-shadow: inset 0 0 0 1px rgba(255, 59, 48, .38); } }
+/* no motion: the blinking light stays lit with a ring instead */
+@media (prefers-reduced-motion: reduce) {
+  .level-lights .light.on.flash { animation: none; outline: 1.5px solid rgba(255, 255, 255, .6); outline-offset: 3px; }
+}
+.recal-ok, .recal-no { border: 0; background: none; cursor: pointer; font-size: 1.05rem; min-width: 36px; min-height: 36px; border-radius: 8px; }
+.recal-ok { color: #6ddf8f; }
+.recal-no { color: inherit; opacity: .7; }
+.recal-btn:focus-visible, .recal-ok:focus-visible, .recal-no:focus-visible, .recal-slider:focus-visible { outline: 2px solid var(--accent, #6db3f2); outline-offset: 2px; }
+@media (max-width: 600px) { .recal-edit { margin-left: 0; } .recal-slider { max-width: none; } }
 
 /* settings: external controllers */
 .controllers .ctl-player { border: 1px solid var(--line, #2a2f38); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
@@ -1033,3 +1068,5 @@ body.bigscreen { background: #000; overflow: hidden; }
 .ctl-dot.on { background: #6ddf8f; }
 .pad-chip { font-size: .95rem; opacity: .9; }
 .ctl-fixed { border: 1px dashed currentColor; border-radius: 8px; padding: 2px 10px; font-size: .82rem; opacity: .75; }
+.recal-btn { white-space: nowrap; }
+@media (max-width: 600px) { .live-name { min-width: 72px; } .live-slider { min-width: 80px; } }

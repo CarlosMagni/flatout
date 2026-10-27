@@ -14,6 +14,30 @@ const LIVE_FIELDS = [
   { id: "fuel", def: 7 },
 ];
 
+// a range input's filled part (CSS --fill), kept in step with its value
+function paintFill(input) {
+  const { min, max, value } = input;
+  input.style.setProperty("--fill", `${((value - min) / (max - min)) * 100}%`);
+}
+
+// A level (1..10) as the CU's five lights show it while SPEED/BRAKE/FUEL is open (V339 state 7):
+// the lights before steady, then the level's own light, steady for an even level, blinking for odd.
+function LevelLights() {
+  const leds = Array.from({ length: 5 }, () => h("i.light"));
+  const el = h("div.lights.level-lights", { role: "img" }, leds);
+  return {
+    el,
+    set(level) {
+      const k = Math.ceil(level / 2) - 1;
+      leds.forEach((led, i) => {
+        led.classList.toggle("on", i <= k);
+        led.classList.toggle("flash", i === k && level % 2 === 1);
+      });
+      el.setAttribute("aria-label", t("live.recal_leds", { level }));
+    },
+  };
+}
+
 export class SettingsView {
   constructor(root) {
     this.root = root;
@@ -55,15 +79,24 @@ export class SettingsView {
         type: "range", min: "1", max: "10", step: "1", value: start,
         "aria-label": t(`garage.${f.id}`),
       });
-      slider.addEventListener("input", () => { value.textContent = slider.value; sync(); });
-      const sel = h("select.recal-sel", {}, ...Array.from({ length: 10 }, (_, i) => h("option", { value: String(i + 1) }, String(i + 1))));
+      slider.addEventListener("input", () => { value.textContent = slider.value; paintFill(slider); sync(); });
+      paintFill(slider);
+      // re-sync: move the slider until these lights look like the CU's, then confirm
+      const leds = LevelLights();
+      const sel = h("input.recal-slider", { type: "range", min: "1", max: "10", step: "1", value: start,
+        "aria-label": t("live.recal_tip") });
+      const selVal = h("output.live-val", { text: start });
+      sel.addEventListener("input", () => { leds.set(Number(sel.value)); selVal.textContent = sel.value; paintFill(sel); });
+      leds.set(Number(start));
       const ok = h("button.recal-ok", { type: "button", title: t("live.recal_ok"), onclick: () => this.recalibrate(f.id, true) }, "\u2713");
       const no = h("button.recal-no", { type: "button", title: t("live.recal_cancel"), onclick: () => this.recalibrate(f.id, false) }, "\u2715");
-      const edit = h("span.recal-edit", { hidden: true }, sel, ok, no);
+      const edit = h("div.recal-edit", { hidden: true },
+        h("span.recal-hint", { text: t("live.recal_match") }), leds.el, sel, selVal, ok, no);
       const recal = h("button.recal-btn", { type: "button", title: t("live.recal_tip"), "aria-label": t("live.recal_tip"), onclick: () => this.recalibrate(f.id) }, "\u21bb " + t("live.recal"));
-      this.liveRecal[f.id] = { sel, edit, recal };
+      this.liveRecal[f.id] = { sel, edit, recal, leds, selVal };
       this.liveSliders[f.id] = slider;
-      return h("div.live-row", {}, h("span.live-name", { text: t(`garage.${f.id}`) }), slider, value, recal, edit);
+      return h("div.live-field", {},
+        h("div.live-row", {}, h("span.live-name", { text: t(`garage.${f.id}`) }), slider, value, recal), edit);
     });
     this.liveGo = h("button.btn.primary", { type: "button", disabled: true, onclick: () => this.liveProgram() }, t("live.go"));
     this.liveHint = h("p.live-hint");
@@ -97,6 +130,9 @@ export class SettingsView {
       r.recal.classList.toggle("on", !r.edit.hidden);
       if (!r.edit.hidden) {
         r.sel.value = this.liveSliders[field].value;
+        paintFill(r.sel);
+        r.leds.set(Number(r.sel.value));
+        r.selVal.textContent = r.sel.value;
         await run("cu.press", { button: field });  // the CU shows that level display
         toast(t("live.recal_open"));
       }
